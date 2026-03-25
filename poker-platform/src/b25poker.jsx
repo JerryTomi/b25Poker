@@ -544,7 +544,7 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
   const cur = CURRENCIES.find(c => c.id === currency) || CURRENCIES[0];
   const ws = useRef(null);
   const [liveGame, setLiveGame] = useState(null);
-  const [betInput, setBetInput] = useState(40);
+  const [betInput, setBetInput] = useState(null);
   const [localCountdown, setLocalCountdown] = useState(null);
 
   useEffect(() => {
@@ -578,7 +578,13 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
   }, [localCountdown]);
 
   useEffect(() => {
-    if (liveGame?.big_blind) setBetInput(p => Math.max(p, liveGame.big_blind));
+    if (liveGame?.big_blind) {
+      setBetInput(prev => {
+        const min = liveGame.big_blind;
+        if (prev === null) return min;
+        return Math.max(prev, min);
+      });
+    }
   }, [liveGame?.big_blind, liveGame?.phase]);
 
   const sendAction = (action, amount = 0) => {
@@ -911,11 +917,27 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
             fontSize: 16, fontWeight: 800,
             color: result.winners?.includes(viewer_id) ? "#10b981" : "#ef4444",
           }}>
-            {result.reason === "fold" ? "Everyone else folded!" :
-              result.winners?.length > 1 ? "Split pot!" :
-              result.winners?.includes(viewer_id) ? "You won the pot! 🎉" :
-              "Opponent takes the pot."}
+            {result.reason === "fold"
+              ? "Everyone else folded!"
+              : result.winners?.length > 1
+                ? "Split pot!"
+                : result.winners?.includes(viewer_id)
+                  ? "You won the pot! 🎉"
+                  : "Opponent takes the pot."}
           </span>
+          {result.reason !== "fold" && result.hands && (() => {
+            const myHand = result.hands?.[viewer_id];
+            const winnerHand = result.hands?.[result.winners?.[0]];
+            const handToShow = myHand || winnerHand;
+            return handToShow ? (
+              <span style={{ marginLeft: 12, fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>
+                {myHand ? `Your hand: ` : `Winning hand: `}
+                <strong style={{ color: result.winners?.includes(viewer_id) ? "#10b981" : "#c9a84c" }}>
+                  {handToShow.name}
+                </strong>
+              </span>
+            ) : null;
+          })()}
         </div>
       )}
 
@@ -952,24 +974,27 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
           </button>
 
         ) : isMyTurn ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center", width: "100%", maxWidth: 560 }}>
-            <div style={{ display: "flex", gap: 10, width: "100%" }}>
-              <ActionButton
-                label="Fold"
-                onClick={() => sendAction("fold")}
-                variant="danger"
-              />
+          <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center", width: "100%", maxWidth: 600 }}>
+            <div style={{ display: "flex", gap: 8, width: "100%" }}>
+              <ActionButton label="Fold" onClick={() => sendAction("fold")} variant="danger" />
               {canCheck ? (
                 <ActionButton label="Check" onClick={() => sendAction("check")} variant="neutral" />
               ) : (
                 <ActionButton label={`Call  ${cur.symbol}${callAmt.toLocaleString()}`} onClick={() => sendAction("call")} variant="call" color={cur.color} />
               )}
               <ActionButton
-                label={`${canCheck ? "Bet" : "Raise"}  ${cur.symbol}${betInput.toLocaleString()}`}
-                onClick={() => sendAction(canCheck ? "bet" : "raise", betInput)}
+                label={`${canCheck ? "Bet" : "Raise"}  ${cur.symbol}${(betInput ?? big_blind).toLocaleString()}`}
+                onClick={() => sendAction(canCheck ? "bet" : "raise", betInput ?? big_blind)}
                 disabled={myData.stack <= 0}
                 variant="primary"
                 color={cur.color}
+              />
+              <ActionButton
+                label={`All-In  ${cur.symbol}${myData.stack?.toLocaleString()}`}
+                onClick={() => sendAction("allin", myData.stack)}
+                disabled={myData.stack <= 0}
+                variant="allin"
+                color="#ef4444"
               />
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%" }}>
@@ -981,7 +1006,7 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
                 min={big_blind}
                 max={myData.stack}
                 step={big_blind}
-                value={betInput}
+                value={betInput ?? big_blind}
                 onChange={e => setBetInput(+e.target.value)}
                 style={{ flex: 1, accentColor: cur.color, height: 4 }}
               />
@@ -1021,6 +1046,12 @@ function ActionButton({ label, onClick, variant, color, disabled = false }) {
       background: `linear-gradient(135deg, ${color || "#c9a84c"}, ${color ? color + "cc" : "#b08a3c"})`,
       border: "none",
       color: "#08070f",
+    },
+    allin: {
+      background: "rgba(239,68,68,0.08)",
+      border: "1px solid rgba(239,68,68,0.4)",
+      color: "#f87171",
+      fontWeight: 900,
     },
   };
   const s = styles[variant] || styles.neutral;

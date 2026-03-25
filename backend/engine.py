@@ -297,8 +297,9 @@ class PokerEngine:
             d["bet"] = 0
         
         split_amt = self.pot // len(winners)
-        for w in winners:
-            self.players[w]["stack"] += split_amt
+        remainder = self.pot % len(winners)
+        for i, w in enumerate(winners):
+            self.players[w]["stack"] += split_amt + (1 if i == 0 else 0) * remainder
             
         if self.mode == "tournament":
             for d in self.players.values():

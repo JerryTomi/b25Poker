@@ -145,23 +145,36 @@ async def websocket_endpoint(websocket: WebSocket, table_id: str, mode: str = "c
                 print(f"Ignored invalid action payload: {e}")
                 
     except WebSocketDisconnect:
-        pass # Handled in the finally block below
+        pass
     except Exception as e:
         print(f"Connection Error: {e}")
     finally:
         # ==========================================
         # 🏦 THE CASHIER: CASH OUT
         # ==========================================
-        if player_id in game_engine.players:
-            final_stack = game_engine.players[player_id]["stack"]
-            db_player.chip_balance += final_stack
-            db.commit()
-            
-        db.close()
-        # ==========================================
-        
+        # Capture final stack BEFORE remove_player deletes the cash game player
+        final_stack = game_engine.players.get(player_id, {}).get("stack", 0)
         game_engine.remove_player(player_id)
+
+        try:
+            # Re-query to avoid stale SQLAlchemy session after long-lived connections
+            db_player = db.query(models.PlayerDB).filter(models.PlayerDB.id == player_id).first()
+            if db_player and final_stack > 0:
+                db_player.chip_balance += final_stack
+                db.commit()
+        except Exception as e:
+            print(f"Cashout DB error for {player_id}: {e}")
+            db.rollback()
+        finally:
+            db.close()
+        # ==========================================
+
         manager.disconnect(websocket, room_key)
+
+        # Clean up empty cash game rooms to prevent memory leaks
+        if room_key in active_games and not active_games[room_key].players:
+            del active_games[room_key]
+
         await manager.broadcast_state(room_key, game_engine)
 
 # ─── SERVE BUILT FRONTEND (production) ───────────────────────────────────────
