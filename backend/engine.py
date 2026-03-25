@@ -13,7 +13,7 @@ class PokerEngine:
         self.mode = mode
         self.max_seats = max_seats
         
-        self.tournament_state = "waiting" if mode == "tournament" else "running"
+        self.tournament_state = "waiting"
         self.blind_levels = [(20, 40), (50, 100), (100, 200), (200, 400), (500, 1000), (1000, 2000)]
         self.current_blind_idx = 0
         self.blind_timer = 60 
@@ -37,19 +37,20 @@ class PokerEngine:
         self.result = None
 
     def _update_lobby_timer(self):
-        if self.mode != "tournament" or self.tournament_state != "waiting":
+        if self.tournament_state != "waiting":
             return
-            
+
         active_count = sum(1 for p in self.seats if p and self.players[p]["stack"] > 0)
-        
+        wait_secs = 10 if self.mode == "cash" else 15
+
         if active_count >= 2:
             if self.lobby_start_time is None:
-                self.lobby_start_time = time.time() + 15 
-            
+                self.lobby_start_time = time.time() + wait_secs
+
             if active_count == self.max_seats:
                 time_left = self.lobby_start_time - time.time()
                 if time_left > 3:
-                    self.lobby_start_time = time.time() + 3 
+                    self.lobby_start_time = time.time() + 3
         else:
             self.lobby_start_time = None
 
@@ -113,23 +114,24 @@ class PokerEngine:
             
         active_players = [p for p in self.seats if p and not self.players[p]["eliminated"] and self.players[p]["stack"] > 0]
         
-        if self.mode == "tournament":
-            if self.tournament_state == "waiting":
-                if len(active_players) >= 2:
-                    self.tournament_state = "running"
-                    self.last_blind_time = time.time()
-                    self.lobby_start_time = None 
-                else:
-                    return False 
-            elif self.tournament_state == "finished":
+        if self.tournament_state == "waiting":
+            if len(active_players) >= 2:
+                self.tournament_state = "running"
+                self.last_blind_time = time.time()
+                self.lobby_start_time = None
+            else:
                 return False
-            
+
+        if self.mode == "tournament":
+            if self.tournament_state == "finished":
+                return False
+
             if len(active_players) <= 1:
                 self.tournament_state = "finished"
                 self.hand_over = True
                 self.result = {"winners": active_players, "reason": "tournament_win", "hands": {}, "amount": 0}
                 return False
-                
+
             if time.time() - self.last_blind_time >= self.blind_timer:
                 self.current_blind_idx = min(self.current_blind_idx + 1, len(self.blind_levels) - 1)
                 self.small_blind, self.big_blind = self.blind_levels[self.current_blind_idx]

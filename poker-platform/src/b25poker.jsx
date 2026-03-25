@@ -714,7 +714,7 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
       position: "relative",
     }}>
       {/* Modals */}
-      {isTournament && tournament_state === "waiting" && (
+      {tournament_state === "waiting" && (
         <Modal>
           <Spinner size={56} />
           <h2 style={{ margin: "20px 0 6px", fontSize: 22, fontWeight: 800 }}>Waiting for players…</h2>
