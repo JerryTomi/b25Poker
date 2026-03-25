@@ -1,56 +1,65 @@
+*, *::before, *::after { box-sizing: border-box; }
+
 :root {
-  font-family: system-ui, Avenir, Helvetica, Arial, sans-serif;
-  line-height: 1.5;
-  font-weight: 400;
-
-  color-scheme: light dark;
-  color: rgba(255, 255, 255, 0.87);
-  background-color: #07060f; /* Matched to your app's dark theme */
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
+  --gold: #c9a84c;
+  --gold-bright: #f0d060;
+  --gold-dim: #7a6030;
+  --felt: #0d3d20;
+  --felt-dark: #082812;
+  --bg: #08070f;
+  --bg-card: #0f0e1a;
+  --bg-surface: #141226;
+  --red: #d63a3a;
+  --green: #10b981;
+  --violet: #8b5cf6;
+  --text-muted: #5a5472;
+  --text-secondary: #9a90b4;
+  --border: rgba(255,255,255,0.06);
+  font-family: 'Inter', system-ui, sans-serif;
+  color: #fff;
+  background: var(--bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-a:hover {
-  color: #535bf2;
-}
-
-body {
+html, body, #root {
   margin: 0;
   padding: 0;
   width: 100%;
-  min-width: 320px;
   min-height: 100vh;
-  overflow-x: hidden; /* Prevents horizontal scrolling */
-}
-
-h1 {
-  font-size: 3.2em;
-  line-height: 1.1;
+  overflow-x: hidden;
 }
 
 button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  background-color: #1a1a1a;
+  font-family: 'Inter', system-ui, sans-serif;
   cursor: pointer;
-  transition: border-color 0.25s;
 }
-button:hover {
-  border-color: #646cff;
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
-button:focus,
-button:focus-visible {
-  outline: 4px auto -webkit-focus-ring-color;
+@keyframes dealIn {
+  from { transform: translateY(-30px) scale(0.75) rotate(-5deg); opacity: 0; }
+  to { transform: translateY(0) scale(1) rotate(0deg); opacity: 1; }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes shimmer {
+  0% { background-position: -400% center; }
+  100% { background-position: 400% center; }
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 20px rgba(201,168,76,0.3); }
+  50% { box-shadow: 0 0 40px rgba(201,168,76,0.6); }
+}
+@keyframes float {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-6px); }
 }
