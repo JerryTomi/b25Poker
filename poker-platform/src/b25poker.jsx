@@ -408,15 +408,30 @@ function Lobby({ onStart, currency, setCurrency, walletAddress, setWalletAddress
         </div>
 
         {/* Footer note */}
-        <p style={{
-          marginTop: 48,
-          fontSize: 12,
-          color: "var(--text-muted)",
-          textAlign: "center",
+        <div style={{
+          marginTop: 52,
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: 10,
           animation: "fadeUp 0.6s ease 0.3s both",
         }}>
-          Powered by Base Sepolia · Secured by on-chain escrow · New players receive 10,000 free chips
-        </p>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
+            Base Sepolia · On-chain escrow · New players receive 10,000 free chips
+          </p>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <span style={{ fontSize: 11, color: "var(--text-muted)", letterSpacing: 0.5 }}>Powered by</span>
+            <span style={{
+              fontFamily: "'Playfair Display', serif",
+              fontWeight: 700,
+              fontSize: 13,
+              background: "linear-gradient(135deg, #c9a84c, #f0d060)",
+              WebkitBackgroundClip: "text",
+              WebkitTextFillColor: "transparent",
+              letterSpacing: 0.5,
+            }}>B25Ventures</span>
+          </div>
+        </div>
       </main>
     </div>
   );
@@ -536,7 +551,8 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
     const tableId = mode;
     const isTournament = mode !== "cash";
     const walletParam = walletAddress ? `&wallet=${walletAddress}` : "";
-    const WS_BASE_URL = import.meta.env.VITE_WS_URL || "ws://localhost:8000";
+    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const WS_BASE_URL = import.meta.env.VITE_WS_URL || `${proto}//${window.location.host}`;
     ws.current = new WebSocket(`${WS_BASE_URL}/ws/table/${tableId}?mode=${isTournament ? "tournament" : "cash"}${walletParam}`);
     ws.current.onopen = () => console.log("🟢 Connected to Casino Table:", tableId);
     ws.current.onmessage = (event) => {
