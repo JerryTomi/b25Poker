@@ -1,7 +1,10 @@
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from typing import Dict, List
 import json
 import uuid
+import os
 from engine import PokerEngine
 
 # --- Database & Web3 Imports ---
@@ -160,3 +163,17 @@ async def websocket_endpoint(websocket: WebSocket, table_id: str, mode: str = "c
         game_engine.remove_player(player_id)
         manager.disconnect(websocket, room_key)
         await manager.broadcast_state(room_key, game_engine)
+
+# ─── SERVE BUILT FRONTEND (production) ───────────────────────────────────────
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+if os.path.isdir(STATIC_DIR):
+    assets_dir = os.path.join(STATIC_DIR, "assets")
+    if os.path.isdir(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="static-assets")
+
+    @app.get("/{full_path:path}")
+    async def serve_spa(full_path: str):
+        file_path = os.path.join(STATIC_DIR, full_path)
+        if os.path.isfile(file_path):
+            return FileResponse(file_path)
+        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
