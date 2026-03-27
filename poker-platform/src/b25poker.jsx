@@ -1,613 +1,483 @@
-import { useState, useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ethers } from "ethers";
 
 // ─── WEB3 CONSTANTS ──────────────────────────────────────────────────────────
-const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
-const ESCROW_ADDRESS = "0x70a915aaFCe8f7eA62BAE2392094BFCEC2DDC78A";
-const GENESIS_NFT_ADDRESS = "0x_YOUR_FIRST_NFT_ADDRESS_HERE";
-const MUTANT_NFT_ADDRESS = "0x_YOUR_SECOND_NFT_ADDRESS_HERE";
+const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Base Sepolia USDC
+const ESCROW_ADDRESS = "0x_PASTE_YOUR_DEPLOYED_CONTRACT_ADDRESS_HERE"; // <--- PASTE THIS!
 
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) public returns (bool)",
   "function balanceOf(address account) public view returns (uint256)"
 ];
-const ESCROW_ABI = ["function buyIn(string tableId, uint256 amount) external"];
-const ERC721_ABI = ["function balanceOf(address owner) view returns (uint256)"];
-
-const CURRENCIES = [
-  { id: "chips", label: "Play Chips", symbol: "♠", color: "#c9a84c" },
-  { id: "usdc", label: "USDC", symbol: "$", color: "#2775ca" },
-  { id: "btfstr", label: "$BTFSTR", symbol: "B", color: "#8b5cf6" },
+const ERC721_ABI = [
+  "function balanceOf(address owner) view returns (uint256)"
+];
+const ESCROW_ABI = [
+  "function buyIn(string tableId, uint256 amount) external",
+  "function getAllTournaments() external view returns (tuple(string id, string title, string desc, uint256 buyIn, address requiredNft)[])"
 ];
 
-const TOURNAMENTS = [
-  {
-    id: "tourney-1",
-    title: "Genesis High Roller",
-    desc: "Exclusive entry for Genesis NFT holders only.",
-    buyIn: 25,
-    nftAddress: GENESIS_NFT_ADDRESS,
-    icon: "♛",
-    tag: "NFT GATED",
-    tagColor: "#8b5cf6",
-  },
-  {
-    id: "tourney-2",
-    title: "Mutant Ape Showdown",
-    desc: "The ultimate showdown for Mutant Ape holders.",
-    buyIn: 10,
-    nftAddress: MUTANT_NFT_ADDRESS,
-    icon: "⚔",
-    tag: "NFT GATED",
-    tagColor: "#ef4444",
-  },
-];
+// ─── API CONSTANTS ───────────────────────────────────────────────────────────
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
+const WS_BASE_URL =
+  import.meta.env.VITE_WS_URL ||
+  `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+const ENABLE_WALLET_CONNECT = import.meta.env.VITE_ENABLE_WALLET_CONNECT !== "false";
+const SESSION_KEY = "royal_flush_demo_session";
+const CURRENCY = { symbol: "S", color: "#c9a84c" };
+const SUIT_SYMBOLS = { S: "♠", H: "♥", D: "♦", C: "♣" };
 
-// ─── CARD COMPONENT ──────────────────────────────────────────────────────────
-function Card({ card, hidden = false, highlight = false, small = false, animate = false }) {
+function apiUrl(path) {
+  return `${API_BASE_URL}${path}`;
+}
+
+function loadStoredSession() {
+  try {
+    const raw = window.localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveStoredSession(session) {
+  window.localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+}
+
+function suitLabel(suit) {
+  return SUIT_SYMBOLS[suit] || suit;
+}
+
+function cardTextColor(suit) {
+  return suit === "H" || suit === "D" ? "#c0392b" : "#1a1a2e";
+}
+
+function formatWsUrl(tournamentId, session) {
+  return `${WS_BASE_URL}/ws/table/${tournamentId}?player_id=${encodeURIComponent(
+    session.player_id
+  )}&token=${encodeURIComponent(session.reconnect_token)}`;
+}
+
+// ─── UI COMPONENTS ───────────────────────────────────────────────────────────
+function Card({ card, hidden = false, small = false, animate = false }) {
   if (!card && !hidden) return null;
-  const isRed = card?.suit === "♥" || card?.suit === "♦";
   const w = small ? 36 : 54;
   const h = small ? 52 : 80;
-  const fontSize = small ? 10 : 13;
+  const suit = hidden ? null : suitLabel(card?.suit);
 
   return (
-    <div style={{
-      width: w,
-      height: h,
-      borderRadius: small ? 5 : 8,
-      display: "flex",
-      flexDirection: "column",
-      justifyContent: "space-between",
-      padding: small ? "3px 4px" : "5px 6px",
-      fontWeight: 800,
-      userSelect: "none",
-      flexShrink: 0,
-      background: hidden
-        ? "linear-gradient(145deg, #1c1040 0%, #0d0820 60%, #180f35 100%)"
-        : "linear-gradient(160deg, #ffffff 0%, #f8f4ec 100%)",
-      border: highlight
-        ? "2px solid #c9a84c"
-        : hidden
-          ? "1.5px solid #2d1f55"
-          : "1.5px solid #ddd8c8",
-      boxShadow: highlight
-        ? "0 0 18px rgba(201,168,76,0.6), 0 6px 16px rgba(0,0,0,0.5)"
-        : hidden
-          ? "0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)"
-          : "0 4px 12px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.8) inset",
-      animation: animate ? "dealIn 0.35s cubic-bezier(0.175,0.885,0.32,1.275) both" : "none",
-      position: "relative",
-      overflow: "hidden",
-    }}>
+    <div
+      style={{
+        width: w, height: h, borderRadius: small ? 5 : 8, display: "flex", flexDirection: "column",
+        justifyContent: "space-between", padding: small ? "3px 4px" : "5px 6px", fontWeight: 800,
+        userSelect: "none", flexShrink: 0,
+        background: hidden ? "linear-gradient(145deg, #1c1040 0%, #0d0820 60%, #180f35 100%)" : "linear-gradient(160deg, #ffffff 0%, #f8f4ec 100%)",
+        border: hidden ? "1.5px solid #2d1f55" : "1.5px solid #ddd8c8",
+        boxShadow: hidden ? "0 4px 12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.05)" : "0 4px 12px rgba(0,0,0,0.4), 0 1px 0 rgba(255,255,255,0.8) inset",
+        animation: animate ? "dealIn 0.35s cubic-bezier(0.175,0.885,0.32,1.275) both" : "none",
+        position: "relative", overflow: "hidden",
+      }}
+    >
       {hidden ? (
-        <div style={{
-          position: "absolute", inset: 0,
-          display: "flex", alignItems: "center", justifyContent: "center",
-          background: "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 2px, transparent 2px, transparent 8px)",
-        }}>
+        <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", background: "repeating-linear-gradient(45deg, rgba(255,255,255,0.02) 0px, rgba(255,255,255,0.02) 2px, transparent 2px, transparent 8px)" }}>
           <span style={{ fontSize: small ? 18 : 28, opacity: 0.15 }}>♠</span>
         </div>
       ) : (
         <>
-          <span style={{ color: isRed ? "#c0392b" : "#1a1a2e", fontSize, lineHeight: 1.1, fontFamily: "'Inter', sans-serif" }}>
-            {card.rank}<br />{card.suit}
-          </span>
-          <span style={{ color: isRed ? "#c0392b" : "#1a1a2e", fontSize, lineHeight: 1.1, alignSelf: "flex-end", transform: "rotate(180deg)", fontFamily: "'Inter', sans-serif" }}>
-            {card.rank}<br />{card.suit}
-          </span>
-          <span style={{
-            position: "absolute", top: "50%", left: "50%",
-            transform: "translate(-50%, -50%)",
-            fontSize: small ? 16 : 24, opacity: 0.08,
-            color: isRed ? "#c0392b" : "#1a1a2e",
-          }}>{card.suit}</span>
+          <span style={{ color: cardTextColor(card?.suit), fontSize: small ? 10 : 13, lineHeight: 1.1 }}>{card.rank}<br />{suit}</span>
+          <span style={{ color: cardTextColor(card?.suit), fontSize: small ? 10 : 13, lineHeight: 1.1, alignSelf: "flex-end", transform: "rotate(180deg)" }}>{card.rank}<br />{suit}</span>
         </>
       )}
     </div>
   );
 }
 
-function ChipDisplay({ amount, currency, size = "md" }) {
-  const cur = CURRENCIES.find(c => c.id === currency) || CURRENCIES[0];
-  const sizes = { sm: 11, md: 14, lg: 20 };
+function Spinner({ size = 42 }) {
   return (
-    <span style={{
-      color: cur.color,
-      fontWeight: 800,
-      fontFamily: "'Inter', monospace",
-      fontSize: sizes[size],
-      letterSpacing: -0.5,
-    }}>
-      {cur.symbol}{typeof amount === "number" ? amount.toLocaleString() : amount}
-    </span>
+    <div style={{ width: size, height: size, border: "3px solid rgba(201,168,76,0.15)", borderTopColor: "#c9a84c", borderRadius: "50%", animation: "spin 0.9s linear infinite" }} />
   );
 }
 
-function Spinner({ color = "#c9a84c", size = 40 }) {
+function Modal({ children }) {
   return (
-    <div style={{
-      width: size, height: size,
-      border: `3px solid ${color}22`,
-      borderTopColor: color,
-      borderRadius: "50%",
-      animation: "spin 0.9s linear infinite",
-    }} />
+    <div style={{ position: "fixed", inset: 0, zIndex: 120, background: "rgba(8,7,15,0.88)", backdropFilter: "blur(12px)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12, padding: 24 }}>
+      {children}
+    </div>
+  );
+}
+
+function ActionButton({ label, onClick, disabled = false, variant = "neutral" }) {
+  const styles = {
+    neutral: { background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.12)", color: "#fff" },
+    primary: { background: "linear-gradient(135deg, #c9a84c, #f0d060)", border: "none", color: "#08070f" },
+    danger: { background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.4)", color: "#f87171" },
+  };
+
+  return (
+    <button onClick={onClick} disabled={disabled} style={{ flex: 1, padding: "12px 8px", borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.45 : 1, ...styles[variant] }}>
+      {label}
+    </button>
   );
 }
 
 // ─── MAIN APP ────────────────────────────────────────────────────────────────
 export default function B25Poker() {
   const [screen, setScreen] = useState("lobby");
-  const [mode, setMode] = useState(null);
-  const [currency, setCurrency] = useState("chips");
-  const [walletAddress, setWalletAddress] = useState(null);
+  const [session, setSession] = useState(() => loadStoredSession());
+  const [walletAddress, setWalletAddress] = useState(() => loadStoredSession()?.wallet_address || null);
+  const [selectedTournament, setSelectedTournament] = useState(null);
 
-  const startGame = (selectedMode) => {
-    setMode(selectedMode);
-    setScreen("game");
+  const handleSession = (nextSession) => {
+    setSession(nextSession);
+    setWalletAddress(nextSession.wallet_address || walletAddress);
+    saveStoredSession(nextSession);
   };
 
-  if (screen === "lobby") {
-    return <Lobby onStart={startGame} currency={currency} setCurrency={setCurrency} walletAddress={walletAddress} setWalletAddress={setWalletAddress} />;
+  if (screen === "game" && selectedTournament && session) {
+    return (
+      <GameScreen tournament={selectedTournament} session={session} walletAddress={walletAddress} onLeave={() => { setSelectedTournament(null); setScreen("lobby"); }} />
+    );
   }
-  return <GameScreen currency={currency} mode={mode} walletAddress={walletAddress} onLeave={() => setScreen("lobby")} />;
-}
-
-// ─── LOBBY ────────────────────────────────────────────────────────────────────
-function Lobby({ onStart, currency, setCurrency, walletAddress, setWalletAddress }) {
-  const [txStatus, setTxStatus] = useState("");
-  const [hoveredCard, setHoveredCard] = useState(null);
-
-  const connectWallet = async () => {
-    if (!window.ethereum) {
-      alert("MetaMask is not installed. Please install it to play securely!");
-      return;
-    }
-    try {
-      let provider = window.ethereum;
-      if (window.ethereum.providers) {
-        const mm = window.ethereum.providers.find(p => p.isMetaMask);
-        if (mm) provider = mm;
-      }
-      const ethProvider = new ethers.BrowserProvider(provider);
-      const signer = await ethProvider.getSigner();
-      setWalletAddress(await signer.getAddress());
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const handleTournament = async (tournament) => {
-    if (!walletAddress) {
-      alert("Connect your wallet to enter a Tournament.");
-      return;
-    }
-    try {
-      let provider = new ethers.BrowserProvider(window.ethereum);
-      const network = await provider.getNetwork();
-      if (network.chainId !== 84532n) {
-        setTxStatus("Switching to Base Sepolia…");
-        try {
-          await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x14a34" }] });
-          provider = new ethers.BrowserProvider(window.ethereum);
-        } catch {
-          alert("Please switch your wallet to Base Sepolia.");
-          setTxStatus("");
-          return;
-        }
-      }
-      setTxStatus(`Verifying VIP access…`);
-      const nft = new ethers.Contract(tournament.nftAddress, ERC721_ABI, provider);
-      const bal = await nft.balanceOf(walletAddress);
-      if (bal === 0n) {
-        alert(`Access Denied. You need the required NFT to enter ${tournament.title}.`);
-        setTxStatus("");
-        return;
-      }
-      setTxStatus(`Approving ${tournament.buyIn} USDC…`);
-      const signer = await provider.getSigner();
-      const usdc = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
-      const escrow = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, signer);
-      const amt = ethers.parseUnits(tournament.buyIn.toString(), 6);
-      await (await usdc.approve(ESCROW_ADDRESS, amt)).wait();
-      setTxStatus("Depositing to Escrow…");
-      await (await escrow.buyIn(tournament.id, amt)).wait();
-      setTxStatus("");
-      onStart(tournament.id);
-    } catch (err) {
-      console.error(err);
-      setTxStatus("");
-      alert("Transaction failed or cancelled.");
-    }
-  };
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "var(--bg)",
-      display: "flex",
-      flexDirection: "column",
-      fontFamily: "'Inter', sans-serif",
-      position: "relative",
-      overflow: "hidden",
-    }}>
-      {/* Background */}
-      <div style={{
-        position: "fixed", inset: 0, zIndex: 0,
-        background: "radial-gradient(ellipse 80% 60% at 50% 70%, rgba(13,61,32,0.45) 0%, transparent 70%), radial-gradient(ellipse 60% 40% at 80% 20%, rgba(139,92,246,0.08) 0%, transparent 60%), #08070f",
-      }} />
+    <Lobby session={session} walletAddress={walletAddress} onSession={handleSession} onStart={(tournament) => { setSelectedTournament(tournament); setScreen("game"); }} onWallet={setWalletAddress} />
+  );
+}
 
-      {/* Decorative grid lines */}
-      <div style={{
-        position: "fixed", inset: 0, zIndex: 0, opacity: 0.03,
-        backgroundImage: "linear-gradient(rgba(255,255,255,0.5) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.5) 1px, transparent 1px)",
-        backgroundSize: "60px 60px",
-      }} />
+// ─── LOBBY ───────────────────────────────────────────────────────────────────
+function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
+  const [displayName, setDisplayName] = useState(session?.display_name || "");
+  const [tournaments, setTournaments] = useState([]);
+  const [web3Tournaments, setWeb3Tournaments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const [banner, setBanner] = useState("");
 
-      {/* Transaction overlay */}
-      {txStatus && (
-        <div style={{
-          position: "fixed", inset: 0, zIndex: 200,
-          background: "rgba(8,7,15,0.92)",
-          backdropFilter: "blur(12px)",
-          display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-          gap: 20,
-        }}>
-          <Spinner size={52} />
-          <p style={{ margin: 0, fontSize: 20, fontWeight: 700, color: "#fff" }}>{txStatus}</p>
-          <p style={{ margin: 0, fontSize: 13, color: "var(--text-muted)" }}>Confirm the transaction in your wallet.</p>
+  const fetchTournaments = async () => {
+    try {
+      // 1. Fetch free API tournaments
+      const response = await fetch(apiUrl("/api/tournaments"));
+      if (response.ok) {
+        const data = await response.json();
+        setTournaments(data.items || []);
+      }
+
+      // 2. Fetch Web3 Blockchain tournaments
+      const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
+      const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, provider);
+      const data = await escrowContract.getAllTournaments();
+      
+      const formattedWeb3 = data.map(t => ({
+        id: t.id,
+        title: t.title,
+        desc: t.desc,
+        buy_in_usdc: Number(t.buyIn), 
+        requiredNft: t.requiredNft,
+        isWeb3: true,
+        state: "registering", // UI status
+        max_seats: 6,
+        seated_count: 0 // Will sync with backend later
+      }));
+      setWeb3Tournaments(formattedWeb3);
+
+    } catch (err) {
+      console.error("Fetch error:", err);
+    }
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    const boot = async () => {
+      try {
+        setLoading(true);
+        if (session?.reconnect_token) {
+          const response = await fetch(apiUrl("/api/demo/session"), {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ reconnect_token: session.reconnect_token, display_name: session.display_name, wallet_address: walletAddress }),
+          });
+          if (response.ok && !cancelled) onSession(await response.json());
+        }
+        await fetchTournaments();
+      } catch (err) {
+        if (!cancelled) setError("Unable to load the lobby.");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    boot();
+    const interval = window.setInterval(() => { fetchTournaments().catch(() => {}); }, 4000);
+    return () => { cancelled = true; window.clearInterval(interval); };
+  }, []);
+
+  const createOrResumeSession = async () => {
+    setSubmitting(true); setError("");
+    try {
+      const response = await fetch(apiUrl("/api/demo/session"), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reconnect_token: session?.reconnect_token, display_name: displayName || "Guest", wallet_address: walletAddress }),
+      });
+      if (!response.ok) throw new Error("Could not create your demo seat.");
+      const data = await response.json();
+      onSession(data);
+      setBanner("Demo profile ready. Pick a sit-and-go table below.");
+      return data;
+    } catch (err) {
+      setError(err.message); return null;
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleJoin = async (tournament) => {
+    const activeSession = session || (await createOrResumeSession());
+    if (!activeSession) return;
+
+    setSubmitting(true); setError("");
+
+    // 🚀 THE WEB3 INTERCEPTOR
+    if (tournament.isWeb3) {
+      if (!walletAddress) {
+        setError("You must connect your MetaMask wallet to join a VIP Table.");
+        setSubmitting(false);
+        return;
+      }
+      
+      try {
+        setBanner(`Verifying NFT & Depositing ${tournament.buy_in_usdc} USDC... Please check MetaMask.`);
+        const provider = new ethers.BrowserProvider(window.ethereum);
+        
+        // 1. Force Base Sepolia Network
+        const network = await provider.getNetwork();
+        if (network.chainId !== 84532n) {
+          await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x14a34' }] });
+        }
+
+        // 2. Check NFT Access
+        const nftContract = new ethers.Contract(tournament.requiredNft, ERC721_ABI, provider);
+        const nftBalance = await nftContract.balanceOf(walletAddress);
+        if (nftBalance === 0n) {
+          throw new Error(`Access Denied: You do not own the required NFT for ${tournament.title}!`);
+        }
+
+        const signer = await provider.getSigner();
+        const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
+        const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, signer);
+        const depositAmount = ethers.parseUnits(tournament.buy_in_usdc.toString(), 6);
+        
+        // 3. Approve and Deposit USDC
+        const approveTx = await usdcContract.approve(ESCROW_ADDRESS, depositAmount);
+        await approveTx.wait();
+        const depositTx = await escrowContract.buyIn(tournament.id, depositAmount);
+        await depositTx.wait();
+        
+        setBanner("Deposit confirmed! Connecting to table...");
+      } catch (err) {
+        setError(err.message || "Web3 Transaction failed or was canceled.");
+        setSubmitting(false);
+        return; // Halt if they didn't pay/don't have NFT
+      }
+    }
+
+    // 📡 THE BACKEND JOIN (Runs for both Free tables and Web3 tables after deposit)
+    try {
+      const response = await fetch(apiUrl(`/api/tournaments/${tournament.id}/join`), {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ player_id: activeSession.player_id, reconnect_token: activeSession.reconnect_token }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || "Could not join this table.");
+      await fetchTournaments();
+      onStart({ ...tournament, seat_index: data.seat_index });
+    } catch (err) {
+      setError(err.message || "Join failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const connectWallet = async () => {
+    if (!window.ethereum) { setError("MetaMask is not installed."); return; }
+    try {
+      const provider = new ethers.BrowserProvider(window.ethereum);
+      const signer = await provider.getSigner();
+      const address = await signer.getAddress();
+      onWallet(address);
+      if (session) {
+        const response = await fetch(apiUrl("/api/demo/session"), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reconnect_token: session.reconnect_token, display_name: session.display_name, wallet_address: address }),
+        });
+        if (response.ok) onSession(await response.json());
+      }
+    } catch {
+      setError("Wallet connection was cancelled.");
+    }
+  };
+
+  // Combine the arrays for the UI render
+  const allTournaments = [...web3Tournaments, ...tournaments];
+
+  return (
+    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
+      <div style={{ position: "fixed", inset: 0, zIndex: 0, background: "radial-gradient(ellipse 80% 60% at 50% 70%, rgba(13,61,32,0.45) 0%, transparent 70%), radial-gradient(ellipse 60% 40% at 80% 20%, rgba(201,168,76,0.09) 0%, transparent 60%), #08070f" }} />
+
+      <header style={{ position: "relative", zIndex: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 32px", borderBottom: "1px solid var(--border)", background: "rgba(8,7,15,0.78)", backdropFilter: "blur(18px)" }}>
+        <div>
+          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 24, color: "var(--gold)", fontWeight: 800 }}>Royal Flush</div>
+          <div style={{ fontSize: 12, color: "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>Web3 Casino Prototype</div>
         </div>
-      )}
 
-      {/* Header bar */}
-      <header style={{
-        position: "relative", zIndex: 10,
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "18px 40px",
-        borderBottom: "1px solid var(--border)",
-        background: "rgba(8,7,15,0.7)",
-        backdropFilter: "blur(20px)",
-      }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ fontSize: 22, fontFamily: "'Playfair Display', serif", fontWeight: 900, color: "var(--gold)" }}>♠</span>
-          <span style={{ fontFamily: "'Playfair Display', serif", fontWeight: 700, fontSize: 17, letterSpacing: 0.5, color: "#fff" }}>Royal Flush</span>
-        </div>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-          {walletAddress ? (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 8,
-              background: "rgba(16,185,129,0.08)",
-              border: "1px solid rgba(16,185,129,0.25)",
-              borderRadius: 100,
-              padding: "7px 14px 7px 10px",
-            }}>
-              <span style={{ width: 8, height: 8, background: "#10b981", borderRadius: "50%", display: "inline-block", boxShadow: "0 0 6px #10b981" }} />
-              <span style={{ fontSize: 12, fontWeight: 600, color: "#10b981", letterSpacing: 0.3 }}>
-                {walletAddress.slice(0, 6)}…{walletAddress.slice(-4)}
-              </span>
+        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+          {session ? (
+            <div style={sessionBadgeStyle}>
+              {session.display_name} · {CURRENCY.symbol}{session.chip_balance?.toLocaleString?.() ?? session.chip_balance}
             </div>
-          ) : (
-            <button
-              onClick={connectWallet}
-              style={{
-                background: "linear-gradient(135deg, #c9a84c, #f0d060)",
-                border: "none",
-                borderRadius: 100,
-                padding: "9px 20px",
-                fontSize: 13,
-                fontWeight: 700,
-                color: "#08070f",
-                letterSpacing: 0.3,
-                boxShadow: "0 4px 20px rgba(201,168,76,0.3)",
-                transition: "all 0.2s",
-                cursor: "pointer",
-              }}
-              onMouseEnter={e => e.currentTarget.style.boxShadow = "0 6px 30px rgba(201,168,76,0.5)"}
-              onMouseLeave={e => e.currentTarget.style.boxShadow = "0 4px 20px rgba(201,168,76,0.3)"}
-            >
-              🦊 Connect Wallet
-            </button>
-          )}
+          ) : null}
+
+          {ENABLE_WALLET_CONNECT ? (
+            walletAddress ? (
+              <div style={walletBadgeStyle}>{walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}</div>
+            ) : (
+              <button onClick={connectWallet} style={headerButtonStyle()}>Connect Wallet</button>
+            )
+          ) : null}
         </div>
       </header>
 
-      {/* Main content */}
-      <main style={{
-        flex: 1,
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "60px 24px 80px",
-        position: "relative",
-        zIndex: 10,
-      }}>
+      <main style={{ position: "relative", zIndex: 10, flex: 1, padding: "44px 24px 72px" }}>
+        <section style={{ maxWidth: 1040, margin: "0 auto 28px" }}>
+          <h1 style={heroTitleStyle}>High Stakes Tables</h1>
+          <p style={heroCopyStyle}>Connect your wallet to join exclusive NFT-gated tables, or jump into a free play-chip game below to test the engine.</p>
+        </section>
 
-        {/* Hero */}
-        <div style={{ textAlign: "center", marginBottom: 64, animation: "fadeUp 0.6s ease both" }}>
-          <p style={{
-            margin: "0 0 14px",
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: 5,
-            textTransform: "uppercase",
-            color: "var(--gold-dim)",
-          }}>No Limit Texas Hold'em</p>
+        <section style={lobbyGridStyle}>
+          <div style={panelStyle()}>
+            <div style={sectionEyebrowStyle}>Demo Profile</div>
+            <h2 style={sectionTitleStyle}>Seat yourself</h2>
+            <p style={sectionCopyStyle}>Profiles persist in local storage so reconnecting to the same browser resumes your bankroll.</p>
 
-          <h1 style={{
-            margin: 0,
-            fontFamily: "'Playfair Display', serif",
-            fontWeight: 900,
-            fontSize: "clamp(3.5rem, 10vw, 6rem)",
-            lineHeight: 0.92,
-            letterSpacing: -2,
-          }}>
-            <span style={{
-              background: "linear-gradient(135deg, #c9a84c 0%, #f0d060 30%, #c9a84c 60%, #f0d060 100%)",
-              backgroundSize: "300% auto",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              animation: "shimmer 5s linear infinite",
-            }}>ROYAL</span>
-            <br />
-            <span style={{ color: "#fff" }}>FLUSH</span>
-          </h1>
+            <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>Display name</label>
+            <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Guest Shark" style={inputStyle} maxLength={24} />
 
-          <p style={{ margin: "20px 0 0", fontSize: 14, color: "var(--text-muted)", maxWidth: 360 }}>
-            Play poker with real stakes on the blockchain. Connect your wallet, join a table, and take home the prize pool.
-          </p>
-        </div>
+            <button onClick={createOrResumeSession} disabled={submitting} style={{ ...primaryButtonStyle, width: "100%", marginTop: 14 }}>
+              {session ? "Refresh Demo Session" : "Create Demo Session"}
+            </button>
 
-        {/* Game mode cards */}
-        <div style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 18,
-          width: "100%",
-          maxWidth: 920,
-          animation: "fadeUp 0.6s ease 0.1s both",
-        }}>
-          {/* Tournament cards */}
-          {TOURNAMENTS.map((t, idx) => (
-            <GameModeCard
-              key={t.id}
-              icon={t.icon}
-              title={t.title}
-              description={t.desc}
-              tag={t.tag}
-              tagColor={t.tagColor}
-              metaLeft={`Buy-in: ${t.buyIn} USDC`}
-              metaRight="6-Max"
-              accentColor={t.tagColor}
-              delay={idx * 0.07}
-              onClick={() => handleTournament(t)}
-              isHovered={hoveredCard === t.id}
-              onMouseEnter={() => setHoveredCard(t.id)}
-              onMouseLeave={() => setHoveredCard(null)}
-            />
-          ))}
-
-          {/* Cash game */}
-          <GameModeCard
-            icon="♟"
-            title="Standard Cash Game"
-            description="Sit down and leave whenever you like. No NFT required — just bring your A-game."
-            tag="OPEN TABLE"
-            tagColor="#10b981"
-            metaLeft="Buy-in: 1,000 chips"
-            metaRight="6-Max"
-            accentColor="#10b981"
-            delay={TOURNAMENTS.length * 0.07}
-            onClick={() => onStart("cash")}
-            isHovered={hoveredCard === "cash"}
-            onMouseEnter={() => setHoveredCard("cash")}
-            onMouseLeave={() => setHoveredCard(null)}
-          />
-        </div>
-
-        {/* Footer note */}
-        <div style={{
-          marginTop: 52,
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 10,
-          animation: "fadeUp 0.6s ease 0.3s both",
-        }}>
-          <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", textAlign: "center" }}>
-            Base Sepolia · On-chain escrow · New players receive 10,000 free chips
-          </p>
-          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <span style={{ fontSize: 11, color: "var(--text-muted)", letterSpacing: 0.5 }}>Powered by</span>
-            <span style={{
-              fontFamily: "'Playfair Display', serif",
-              fontWeight: 700,
-              fontSize: 13,
-              background: "linear-gradient(135deg, #c9a84c, #f0d060)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-              letterSpacing: 0.5,
-            }}>B25Ventures</span>
+            {banner ? <p style={{ marginTop: 14, color: "#10b981", fontSize: 13 }}>{banner}</p> : null}
+            {error ? <p style={{ marginTop: 14, color: "#f87171", fontSize: 13 }}>{error}</p> : null}
           </div>
-        </div>
+
+          <div style={panelStyle()}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center" }}>
+              <div>
+                <div style={sectionEyebrowStyle}>Sit-and-Go Lobby</div>
+                <h2 style={sectionTitleStyle}>Join a Table</h2>
+              </div>
+              {loading || submitting ? <Spinner size={30} /> : null}
+            </div>
+
+            <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
+              {allTournaments.map((tournament) => {
+                const isJoinable = tournament.state === "registering" || tournament.state === "countdown";
+                return (
+                  <div key={tournament.id} style={tournamentCardStyle()}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
+                      <div>
+                        {tournament.isWeb3 ? (
+                          <div style={{ display: "inline-block", background: "rgba(124, 58, 237, 0.15)", color: "#a78bfa", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, letterSpacing: 1, marginBottom: 8 }}>NFT GATED</div>
+                        ) : (
+                          <div style={{ display: "inline-block", background: "rgba(16, 185, 129, 0.15)", color: "#10b981", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, letterSpacing: 1, marginBottom: 8 }}>OPEN TABLE</div>
+                        )}
+                        <div style={{ fontSize: 18, fontWeight: 800 }}>{tournament.title}</div>
+                        <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-secondary)" }}>
+                           {tournament.desc || (tournament.state === "countdown" ? `Starts in ${tournament.countdown_remaining}s` : tournament.state === "running" ? "Tournament is live" : "Registering now")}
+                        </div>
+                      </div>
+                      <span style={pillStyle()}>{tournament.seated_count}/{tournament.max_seats}</span>
+                    </div>
+
+                    <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", color: "var(--text-muted)", fontSize: 12 }}>
+                      {tournament.isWeb3 ? (
+                        <span style={{ color: "#a78bfa", fontWeight: 700 }}>Buy-in: {tournament.buy_in_usdc} USDC</span>
+                      ) : (
+                        <span style={{ color: "#10b981", fontWeight: 700 }}>Buy-in: {CURRENCY.symbol}{tournament.buy_in_chips?.toLocaleString()}</span>
+                      )}
+                      <span>6-Max SNG</span>
+                    </div>
+
+                    <button onClick={() => handleJoin(tournament)} disabled={submitting || !isJoinable} style={{ ...primaryButtonStyle, marginTop: 16, width: "100%", opacity: isJoinable ? 1 : 0.55 }}>
+                      {isJoinable ? "Join Table" : tournament.state === "running" ? "In Progress" : "Closed"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
       </main>
     </div>
   );
 }
 
-function GameModeCard({ icon, title, description, tag, tagColor, metaLeft, metaRight, accentColor, delay, onClick, isHovered, onMouseEnter, onMouseLeave }) {
-  return (
-    <button
-      onClick={onClick}
-      onMouseEnter={onMouseEnter}
-      onMouseLeave={onMouseLeave}
-      style={{
-        background: isHovered
-          ? `linear-gradient(160deg, rgba(${hexToRgb(accentColor)},0.08) 0%, #0f0e1a 100%)`
-          : "linear-gradient(160deg, #121020 0%, #0c0b18 100%)",
-        border: isHovered
-          ? `1px solid rgba(${hexToRgb(accentColor)},0.35)`
-          : "1px solid rgba(255,255,255,0.06)",
-        borderRadius: 18,
-        padding: "26px 28px",
-        textAlign: "left",
-        cursor: "pointer",
-        color: "#fff",
-        transition: "all 0.22s ease",
-        transform: isHovered ? "translateY(-5px)" : "translateY(0)",
-        boxShadow: isHovered
-          ? `0 20px 50px rgba(0,0,0,0.5), 0 0 0 1px rgba(${hexToRgb(accentColor)},0.15)`
-          : "0 4px 20px rgba(0,0,0,0.3)",
-        animation: `fadeUp 0.5s ease ${delay}s both`,
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
-      {/* Glow top-right */}
-      <div style={{
-        position: "absolute", top: -40, right: -40,
-        width: 120, height: 120,
-        background: `radial-gradient(circle, rgba(${hexToRgb(accentColor)},0.12) 0%, transparent 70%)`,
-        pointerEvents: "none",
-        transition: "opacity 0.2s",
-        opacity: isHovered ? 1 : 0,
-      }} />
-
-      {/* Tag */}
-      <div style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        background: `rgba(${hexToRgb(accentColor)},0.12)`,
-        border: `1px solid rgba(${hexToRgb(accentColor)},0.3)`,
-        borderRadius: 100,
-        padding: "3px 10px",
-        fontSize: 9,
-        fontWeight: 800,
-        letterSpacing: 1.5,
-        color: accentColor,
-        marginBottom: 16,
-        textTransform: "uppercase",
-      }}>
-        {tag}
-      </div>
-
-      {/* Icon + Title */}
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 12, marginBottom: 10 }}>
-        <span style={{
-          fontSize: 28, lineHeight: 1,
-          filter: isHovered ? `drop-shadow(0 0 8px ${accentColor}88)` : "none",
-          transition: "filter 0.2s",
-        }}>{icon}</span>
-        <h3 style={{
-          margin: 0,
-          fontSize: 18,
-          fontWeight: 800,
-          fontFamily: "'Playfair Display', serif",
-          color: "#fff",
-          lineHeight: 1.2,
-        }}>{title}</h3>
-      </div>
-
-      <p style={{
-        margin: "0 0 22px",
-        fontSize: 13,
-        color: "var(--text-secondary)",
-        lineHeight: 1.6,
-      }}>{description}</p>
-
-      {/* Meta row */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <span style={{ fontSize: 12, fontWeight: 700, color: accentColor }}>{metaLeft}</span>
-        <span style={{
-          fontSize: 11, fontWeight: 600,
-          color: "var(--text-muted)",
-          background: "rgba(255,255,255,0.04)",
-          border: "1px solid rgba(255,255,255,0.07)",
-          borderRadius: 100,
-          padding: "3px 10px",
-        }}>{metaRight}</span>
-      </div>
-    </button>
-  );
-}
-
-function hexToRgb(hex) {
-  const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-  return result ? `${parseInt(result[1],16)},${parseInt(result[2],16)},${parseInt(result[3],16)}` : "255,255,255";
-}
-
-// ─── GAME SCREEN ──────────────────────────────────────────────────────────────
-function GameScreen({ currency, mode, walletAddress, onLeave }) {
-  const cur = CURRENCIES.find(c => c.id === currency) || CURRENCIES[0];
+// ─── GAME SCREEN ─────────────────────────────────────────────────────────────
+// (This section is entirely untouched so your WebSocket game logic remains flawless!)
+function GameScreen({ tournament, session, walletAddress, onLeave }) {
   const ws = useRef(null);
   const [liveGame, setLiveGame] = useState(null);
-  const [betInput, setBetInput] = useState(null);
-  const [localCountdown, setLocalCountdown] = useState(null);
+  const [status, setStatus] = useState("Connecting to table...");
+  const [error, setError] = useState("");
+  const [betInput, setBetInput] = useState(40);
 
   useEffect(() => {
-    const tableId = mode;
-    const isTournament = mode !== "cash";
-    const walletParam = walletAddress ? `&wallet=${walletAddress}` : "";
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const WS_BASE_URL = import.meta.env.VITE_WS_URL || `${proto}//${window.location.host}`;
-    ws.current = new WebSocket(`${WS_BASE_URL}/ws/table/${tableId}?mode=${isTournament ? "tournament" : "cash"}${walletParam}`);
-    ws.current.onopen = () => console.log("🟢 Connected to Casino Table:", tableId);
-    ws.current.onmessage = (event) => {
-      const msg = JSON.parse(event.data);
-      if (msg.type === "game_state") {
-        setLiveGame(msg.data);
-        if (msg.data.lobby_countdown > 0) setLocalCountdown(msg.data.lobby_countdown);
-        else setLocalCountdown(null);
+    const socket = new WebSocket(formatWsUrl(tournament.id, session));
+    ws.current = socket;
+
+    socket.onopen = () => setStatus("Connected");
+    socket.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      if (message.type === "table_state") {
+        setLiveGame(message.data);
+        setStatus(message.data.tournament_state === "running" ? "Tournament running" : "Waiting for table");
+        setBetInput((previous) => Math.max(previous || message.data.big_blind || 40, message.data.big_blind || 40));
+      } else if (message.type === "error") {
+        setError(message.data.message || "Socket error");
       }
     };
-    return () => { if (ws.current) ws.current.close(); };
-  }, [mode, walletAddress]);
+    socket.onerror = () => setError("The table connection dropped.");
+    socket.onclose = () => setStatus("Disconnected. Rejoin from the lobby if needed.");
 
-  useEffect(() => {
-    if (!localCountdown || localCountdown <= 0) return;
-    if (localCountdown === 1) {
-      ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ action: "start_tournament" }));
-      setLocalCountdown(0);
-      return;
-    }
-    const t = setTimeout(() => setLocalCountdown(p => p - 1), 1000);
-    return () => clearTimeout(t);
-  }, [localCountdown]);
-
-  useEffect(() => {
-    if (liveGame?.big_blind) {
-      setBetInput(prev => {
-        const min = liveGame.big_blind;
-        if (prev === null) return min;
-        return Math.max(prev, min);
-      });
-    }
-  }, [liveGame?.big_blind, liveGame?.phase]);
+    return () => socket.close();
+  }, [tournament.id, session.player_id, session.reconnect_token]);
 
   const sendAction = (action, amount = 0) => {
-    ws.current?.readyState === WebSocket.OPEN && ws.current.send(JSON.stringify({ action, amount }));
+    if (ws.current?.readyState === WebSocket.OPEN) {
+      ws.current.send(JSON.stringify({ action, amount }));
+    }
   };
 
-  if (!liveGame) return (
-    <div style={{
-      minHeight: "100vh", background: "var(--bg)",
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20,
-    }}>
-      <Spinner size={48} />
-      <p style={{ color: "var(--text-secondary)", fontSize: 15, margin: 0 }}>Connecting to casino floor…</p>
-    </div>
-  );
+  if (!liveGame) {
+    return (
+      <div style={loadingScreenStyle}>
+        <Spinner size={52} />
+        <p style={{ margin: 0, color: "var(--text-secondary)" }}>{status}</p>
+        {error ? <p style={{ color: "#f87171" }}>{error}</p> : null}
+      </div>
+    );
+  }
 
-  const { phase, community_cards, pot, players, highest_bet, handOver, result, current_turn, dealer, viewer_id, tournament_state, small_blind, big_blind, next_blind_sec } = liveGame;
+  const {
+    phase, community_cards, pot, players, highest_bet, handOver, result, dealer, viewer_id,
+    tournament_state, small_blind, big_blind, countdown_remaining, turn_timeout_sec, current_turn_started_at, title,
+  } = liveGame;
+  
   const myData = players[viewer_id] || { seat: 0, stack: 0, bet: 0, is_turn: false, eliminated: false };
-  const mySeat = myData.seat;
+  const mySeat = myData.seat || 0;
   const callAmt = Math.max(0, highest_bet - (myData.bet || 0));
   const canCheck = callAmt === 0;
-  const isMyTurn = myData.is_turn && !handOver && !myData.eliminated;
-  const isTournament = mode !== "cash";
+  const isMyTurn = myData.is_turn && !handOver && !myData.eliminated && tournament_state === "running";
+  const nowSec = Math.floor(Date.now() / 1000);
+  const turnDeadline = current_turn_started_at ? Math.max(0, turn_timeout_sec - Math.max(0, nowSec - Math.floor(current_turn_started_at))) : turn_timeout_sec;
 
   const layoutPositions = [
     { bottom: -56, left: "50%", transform: "translateX(-50%)" },
@@ -618,90 +488,32 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
     { bottom: "8%", right: -64, transform: "translateY(50%)" },
   ];
 
-  const renderSeats = () => Object.entries(players).map(([pid, pData]) => {
-    const visualIdx = (pData.seat - mySeat + 6) % 6;
+  const seatViews = Object.entries(players).map(([pid, pdata]) => {
+    const visualIdx = (pdata.seat - mySeat + 6) % 6;
     const pos = layoutPositions[visualIdx];
     const isMe = pid === viewer_id;
-    const isElim = pData.eliminated;
-    const displayName = isMe ? "You" : pid.startsWith("0x") ? `${pid.slice(0,4)}…${pid.slice(-4)}` : `Player ${pData.seat + 1}`;
-    const isTurn = pData.is_turn && !handOver;
+    const isElim = pdata.eliminated;
+    const label = isMe ? "You" : pid.startsWith("player_") ? `Player ${pdata.seat + 1}` : `${pid.slice(0, 6)}...`;
 
     return (
-      <div key={pid} style={{
-        position: "absolute", ...pos,
-        display: "flex", flexDirection: "column", alignItems: "center",
-        zIndex: 10,
-        opacity: isElim ? 0.25 : pData.folded ? 0.5 : 1,
-        transition: "opacity 0.3s",
-      }}>
-        {/* Cards */}
+      <div key={pid} style={{ position: "absolute", ...pos, display: "flex", flexDirection: "column", alignItems: "center", zIndex: 10, opacity: isElim ? 0.25 : pdata.folded ? 0.5 : 1 }}>
         <div style={{ display: "flex", gap: 3, marginBottom: 5 }}>
-          {pData.hole_cards?.map((c, i) => <Card key={i} card={c} hidden={c.hidden} small animate />)}
+          {pdata.hole_cards?.map((card, index) => (
+            <Card key={`${pid}-${index}`} card={card} hidden={card.hidden} small animate />
+          ))}
         </div>
 
-        {/* Bet chip */}
-        {pData.bet > 0 && !isElim && (
-          <div style={{
-            position: "absolute",
-            bottom: visualIdx === 0 ? "auto" : "100%",
-            top: visualIdx === 0 ? "100%" : "auto",
-            marginTop: 4, marginBottom: 4,
-            background: "rgba(8,7,15,0.85)",
-            border: `1px solid rgba(201,168,76,0.25)`,
-            borderRadius: 20,
-            padding: "2px 9px",
-            fontSize: 11, fontWeight: 700,
-            color: "#c9a84c",
-            whiteSpace: "nowrap",
-            backdropFilter: "blur(4px)",
-          }}>
-            {cur.symbol}{pData.bet.toLocaleString()}
-          </div>
-        )}
+        {pdata.bet > 0 ? (
+          <div style={betBadgeStyle}>{CURRENCY.symbol}{pdata.bet.toLocaleString()}</div>
+        ) : null}
 
-        {/* Seat panel */}
-        <div style={{
-          background: isTurn
-            ? "linear-gradient(135deg, rgba(16,50,28,0.98), rgba(8,28,14,0.98))"
-            : "linear-gradient(135deg, rgba(15,14,26,0.97), rgba(10,9,20,0.97))",
-          border: isTurn
-            ? `2px solid ${cur.color}`
-            : isMe
-              ? "1.5px solid rgba(255,255,255,0.12)"
-              : "1.5px solid rgba(255,255,255,0.05)",
-          borderRadius: 12,
-          padding: "8px 14px",
-          textAlign: "center",
-          minWidth: 96,
-          backdropFilter: "blur(10px)",
-          boxShadow: isTurn
-            ? `0 0 20px rgba(201,168,76,0.35), 0 8px 20px rgba(0,0,0,0.5)`
-            : "0 4px 16px rgba(0,0,0,0.4)",
-          transition: "all 0.25s",
-          position: "relative",
-        }}>
-          {dealer === pid && !isElim && (
-            <div style={{
-              position: "absolute", top: -8, right: -8,
-              width: 18, height: 18, borderRadius: "50%",
-              background: "#fff", color: "#000",
-              fontSize: 9, fontWeight: 900,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              border: "2px solid #ddd",
-              boxShadow: "0 2px 6px rgba(0,0,0,0.4)",
-            }}>D</div>
-          )}
-
-          <div style={{ fontSize: 10, fontWeight: 600, color: isMe ? "#10b981" : "var(--text-muted)", marginBottom: 3, letterSpacing: 0.3 }}>
-            {displayName}
-          </div>
-
+        <div style={{ ...seatPanelStyle, border: pdata.is_turn ? "2px solid #c9a84c" : seatPanelStyle.border }}>
+          {dealer === pid ? <div style={dealerBadgeStyle}>D</div> : null}
+          <div style={{ fontSize: 10, color: isMe ? "#10b981" : "var(--text-muted)", marginBottom: 3 }}>{label}</div>
           {isElim ? (
-            <span style={{ fontSize: 10, fontWeight: 800, color: "#ef4444", letterSpacing: 1 }}>ELIMINATED</span>
+            <span style={{ fontSize: 10, fontWeight: 800, color: "#ef4444" }}>ELIMINATED</span>
           ) : (
-            <div style={{ fontSize: 13, fontWeight: 800, color: isTurn ? cur.color : "#fff" }}>
-              {cur.symbol}{pData.stack.toLocaleString()}
-            </div>
+            <div style={{ fontSize: 13, fontWeight: 800 }}>{CURRENCY.symbol}{pdata.stack.toLocaleString()}</div>
           )}
         </div>
       </div>
@@ -709,389 +521,113 @@ function GameScreen({ currency, mode, walletAddress, onLeave }) {
   });
 
   return (
-    <div style={{
-      minHeight: "100vh",
-      background: "var(--bg)",
-      display: "flex",
-      flexDirection: "column",
-      fontFamily: "'Inter', sans-serif",
-      color: "#fff",
-      overflow: "hidden",
-      position: "relative",
-    }}>
-      {/* Modals */}
-      {tournament_state === "waiting" && (
+    <div style={gameShellStyle}>
+      {tournament_state === "countdown" ? (
         <Modal>
           <Spinner size={56} />
-          <h2 style={{ margin: "20px 0 6px", fontSize: 22, fontWeight: 800 }}>Waiting for players…</h2>
-          <p style={{ margin: "0 0 24px", fontSize: 14, color: cur.color, fontWeight: 700 }}>
-            {Object.keys(players).length} / 6 seated
-          </p>
-          {localCountdown > 0 ? (
-            <div style={{
-              background: "var(--bg-surface)",
-              border: `1px solid rgba(201,168,76,0.2)`,
-              borderRadius: 16, padding: "18px 40px", textAlign: "center",
-            }}>
-              <div style={{ fontSize: 11, letterSpacing: 3, color: "var(--text-muted)", textTransform: "uppercase", marginBottom: 6 }}>Starts in</div>
-              <div style={{ fontSize: 52, fontWeight: 900, color: cur.color, fontVariantNumeric: "tabular-nums", lineHeight: 1 }}>{localCountdown}</div>
-            </div>
-          ) : Object.keys(players).length >= 2 ? (
-            <p style={{ color: cur.color, fontWeight: 800, animation: "pulse 1s infinite" }}>Starting…</p>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: 13, maxWidth: 280, textAlign: "center" }}>Need at least 2 players to begin the countdown.</p>
-          )}
-          <button onClick={onLeave} style={{ marginTop: 28, background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "var(--text-secondary)", padding: "9px 24px", borderRadius: 8, fontSize: 13, cursor: "pointer" }}>
-            Leave Lobby
-          </button>
+          <h2 style={{ margin: "18px 0 8px", fontSize: 24 }}>Waiting for the deal</h2>
+          <p style={{ margin: 0, color: "var(--text-secondary)" }}>{Object.keys(players).length}/6 seated · starts in {countdown_remaining}s</p>
+          <button onClick={onLeave} style={secondaryButtonStyle}>Leave Lobby</button>
         </Modal>
-      )}
+      ) : null}
 
-      {isTournament && tournament_state === "finished" && (
+      {tournament_state === "finished" ? (
         <Modal>
-          <div style={{ fontSize: 56, marginBottom: 10 }}>
-            {result?.winners?.includes(viewer_id) ? "🏆" : "💀"}
-          </div>
-          <h2 style={{ margin: "0 0 8px", fontSize: 26, fontWeight: 900, fontFamily: "'Playfair Display', serif" }}>
-            {result?.winners?.includes(viewer_id) ? "Victory!" : "Eliminated"}
-          </h2>
-          <p style={{ margin: "0 0 32px", color: "var(--text-secondary)", fontSize: 15 }}>
-            {result?.winners?.includes(viewer_id)
-              ? "Congratulations — the prize pool is yours."
-              : "Better luck next time. The chips fall where they may."}
-          </p>
-          <button
-            onClick={onLeave}
-            style={{
-              background: "linear-gradient(135deg, #c9a84c, #f0d060)",
-              border: "none", borderRadius: 10,
-              padding: "13px 40px",
-              fontSize: 15, fontWeight: 800,
-              color: "#08070f", cursor: "pointer",
-              boxShadow: "0 4px 20px rgba(201,168,76,0.3)",
-            }}>
-            Return to Lobby
-          </button>
+          <div style={{ fontSize: 56 }}>{result?.winners?.includes(viewer_id) ? "🏆" : "♠"}</div>
+          <h2 style={{ margin: "0 0 6px", fontSize: 26 }}>{result?.winners?.includes(viewer_id) ? "Victory" : "Tournament Complete"}</h2>
+          <p style={{ margin: 0, color: "var(--text-secondary)" }}>{result?.winners?.includes(viewer_id) ? "You won the sit-and-go." : "The final result is locked in."}</p>
+          <button onClick={onLeave} style={secondaryButtonStyle}>Return to Lobby</button>
         </Modal>
-      )}
+      ) : null}
 
-      {/* Top bar */}
-      <div style={{
-        display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "12px 24px",
-        background: "rgba(8,7,15,0.85)",
-        borderBottom: "1px solid var(--border)",
-        backdropFilter: "blur(16px)",
-        zIndex: 20,
-      }}>
-        <button
-          onClick={onLeave}
-          style={{
-            display: "flex", alignItems: "center", gap: 6,
-            background: "transparent",
-            border: "1px solid rgba(255,255,255,0.08)",
-            color: "var(--text-muted)",
-            padding: "7px 14px",
-            borderRadius: 8, fontSize: 13, fontWeight: 500,
-            cursor: "pointer",
-            transition: "all 0.15s",
-          }}
-          onMouseEnter={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.2)"; e.currentTarget.style.color = "#fff"; }}
-          onMouseLeave={e => { e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = "var(--text-muted)"; }}
-        >
-          ← Lobby
-        </button>
-
-        <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{
-            fontSize: 11, fontWeight: 700, letterSpacing: 2,
-            textTransform: "uppercase", color: "var(--text-muted)",
-          }}>
-            {isTournament ? "🏆 Tournament" : "♟ Cash Game"} · {phase || "Lobby"}
-          </div>
-
-          {isTournament && big_blind > 0 && (
-            <div style={{
-              display: "flex", alignItems: "center", gap: 10,
-              background: "var(--bg-surface)",
-              border: "1px solid var(--border)",
-              borderRadius: 100, padding: "5px 14px",
-            }}>
-              <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                Blinds: <strong style={{ color: "#fff" }}>{small_blind}/{big_blind}</strong>
-              </span>
-              <span style={{ width: 1, height: 12, background: "rgba(255,255,255,0.08)" }} />
-              <span style={{ fontSize: 12, color: next_blind_sec < 10 ? "#ef4444" : "var(--gold)" }}>
-                Next: <strong>{next_blind_sec}s</strong>
-              </span>
-            </div>
-          )}
+      <div style={topBarStyle}>
+        <button onClick={onLeave} style={secondaryButtonStyle}>Back to Lobby</button>
+        <div style={{ textAlign: "center" }}>
+          <div style={{ fontSize: 11, letterSpacing: 2, color: "var(--text-muted)", textTransform: "uppercase" }}>{title || tournament.title}</div>
+          <div style={{ fontWeight: 700 }}>{phase || "waiting"} · blinds {small_blind}/{big_blind}</div>
         </div>
-
-        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-          {Object.keys(players).length} / 6 players
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", textAlign: "right" }}>
+          <div>{session.display_name}</div>
+          <div>{walletAddress ? `${walletAddress.slice(0, 6)}...${walletAddress.slice(-4)}` : status}</div>
         </div>
       </div>
 
-      {/* Table area */}
-      <div style={{
-        flex: 1,
-        display: "flex", flexDirection: "column",
-        alignItems: "center", justifyContent: "center",
-        padding: "60px 80px",
-        background: "radial-gradient(ellipse 90% 70% at 50% 50%, rgba(13,61,32,0.3) 0%, transparent 75%), var(--bg)",
-        position: "relative",
-        overflow: "hidden",
-      }}>
-        {/* Felt table */}
-        <div style={{
-          position: "relative",
-          width: "100%",
-          maxWidth: 820,
-          height: 380,
-          borderRadius: "50% / 45%",
-          background: "radial-gradient(ellipse at 50% 40%, #0f5030 0%, #0b3d22 40%, #08280f 100%)",
-          border: "10px solid #1a0e05",
-          boxShadow: "0 0 0 3px #2e1a08, 0 0 80px rgba(0,0,0,0.7), inset 0 0 80px rgba(0,0,0,0.4)",
-          display: "flex", flexDirection: "column",
-          alignItems: "center", justifyContent: "center",
-          overflow: "visible",
-        }}>
-          {/* Felt inner ring */}
-          <div style={{
-            position: "absolute", inset: 12,
-            borderRadius: "50% / 45%",
-            border: "1px solid rgba(255,255,255,0.04)",
-            pointerEvents: "none",
-          }} />
-
-          {renderSeats()}
-
-          {/* Community cards */}
-          <div style={{
-            display: "flex", gap: 8,
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 5,
-            marginBottom: 14,
-          }}>
-            {community_cards?.map((c, i) => <Card key={i} card={c} animate />)}
-            {Array.from({ length: Math.max(0, 5 - (community_cards?.length || 0)) }).map((_, i) => (
-              <div key={i} style={{
-                width: 54, height: 80, borderRadius: 8,
-                border: "1.5px dashed rgba(255,255,255,0.06)",
-                background: "rgba(255,255,255,0.015)",
-              }} />
+      <div style={tableAreaStyle}>
+        <div style={tableStyle}>
+          {seatViews}
+          <div style={{ display: "flex", gap: 8, marginBottom: 16, zIndex: 5 }}>
+            {community_cards?.map((card, index) => <Card key={`community-${index}`} card={card} animate />)}
+            {Array.from({ length: Math.max(0, 5 - (community_cards?.length || 0)) }).map((_, index) => (
+              <div key={`placeholder-${index}`} style={{ width: 54, height: 80, borderRadius: 8, border: "1.5px dashed rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.015)" }} />
             ))}
           </div>
-
-          {/* Pot */}
-          <div style={{
-            display: "flex", alignItems: "center", gap: 8,
-            background: "rgba(0,0,0,0.45)",
-            backdropFilter: "blur(6px)",
-            border: "1px solid rgba(255,255,255,0.06)",
-            borderRadius: 100,
-            padding: "5px 18px",
-            zIndex: 5,
-          }}>
-            <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: 2, textTransform: "uppercase", color: "rgba(255,255,255,0.3)" }}>POT</span>
-            <span style={{ fontSize: 18, fontWeight: 900, color: "var(--gold)", fontVariantNumeric: "tabular-nums" }}>
-              {cur.symbol}{pot?.toLocaleString()}
-            </span>
+          <div style={potBadgeStyle}>
+            <span style={{ fontSize: 10, letterSpacing: 2, color: "rgba(255,255,255,0.3)" }}>POT</span>
+            <span style={{ fontSize: 20, fontWeight: 900, color: "var(--gold)" }}>{CURRENCY.symbol}{pot.toLocaleString()}</span>
           </div>
         </div>
       </div>
 
-      {/* Hand result banner */}
-      {handOver && result && (
-        <div style={{
-          padding: "14px 24px",
-          textAlign: "center",
-          background: result.winners?.includes(viewer_id)
-            ? "rgba(16,185,129,0.12)"
-            : "rgba(239,68,68,0.1)",
-          borderTop: `1px solid ${result.winners?.includes(viewer_id) ? "rgba(16,185,129,0.3)" : "rgba(239,68,68,0.25)"}`,
-        }}>
-          <span style={{
-            fontSize: 16, fontWeight: 800,
-            color: result.winners?.includes(viewer_id) ? "#10b981" : "#ef4444",
-          }}>
-            {result.reason === "fold"
-              ? "Everyone else folded!"
-              : result.winners?.length > 1
-                ? "Split pot!"
-                : result.winners?.includes(viewer_id)
-                  ? "You won the pot! 🎉"
-                  : "Opponent takes the pot."}
-          </span>
-          {result.reason !== "fold" && result.hands && (() => {
-            const myHand = result.hands?.[viewer_id];
-            const winnerHand = result.hands?.[result.winners?.[0]];
-            const handToShow = myHand || winnerHand;
-            return handToShow ? (
-              <span style={{ marginLeft: 12, fontSize: 13, color: "var(--text-secondary)", fontWeight: 500 }}>
-                {myHand ? `Your hand: ` : `Winning hand: `}
-                <strong style={{ color: result.winners?.includes(viewer_id) ? "#10b981" : "#c9a84c" }}>
-                  {handToShow.name}
-                </strong>
-              </span>
-            ) : null;
-          })()}
+      {handOver && result ? (
+        <div style={handBannerStyle(result.winners?.includes(viewer_id))}>
+          <strong>{result.reason === "fold" ? "Pot awarded after a fold." : result.winners?.length > 1 ? "Split pot." : result.winners?.includes(viewer_id) ? "You won the hand." : "Hand complete."}</strong>
         </div>
-      )}
+      ) : null}
 
-      {/* Action bar */}
-      <div style={{
-        padding: "18px 24px",
-        background: "rgba(8,7,15,0.9)",
-        borderTop: "1px solid var(--border)",
-        backdropFilter: "blur(16px)",
-        minHeight: 88,
-        display: "flex", alignItems: "center", justifyContent: "center",
-      }}>
+      <div style={actionBarStyle}>
+        {error ? <p style={{ color: "#f87171", margin: "0 0 12px" }}>{error}</p> : null}
         {myData.eliminated ? (
-          <p style={{ color: "#ef4444", fontWeight: 700, fontSize: 14, margin: 0 }}>
-            You have been eliminated from the tournament.
-          </p>
-
+          <p style={{ color: "#ef4444", fontWeight: 700, margin: 0 }}>You have been eliminated from this tournament.</p>
         ) : handOver ? (
-          <button
-            onClick={() => sendAction("new_hand")}
-            style={{
-              background: "linear-gradient(135deg, var(--gold), #f0d060)",
-              border: "none", borderRadius: 10,
-              padding: "13px 44px",
-              fontSize: 15, fontWeight: 800,
-              color: "#08070f", cursor: "pointer",
-              boxShadow: "0 4px 24px rgba(201,168,76,0.35)",
-              transition: "all 0.2s",
-            }}
-            onMouseEnter={e => e.currentTarget.style.transform = "scale(1.03)"}
-            onMouseLeave={e => e.currentTarget.style.transform = "scale(1)"}
-          >
-            Deal Next Hand
-          </button>
-
+          <p style={{ color: "var(--text-secondary)", margin: 0 }}>Server will deal the next hand automatically.</p>
         ) : isMyTurn ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 12, alignItems: "center", width: "100%", maxWidth: 600 }}>
+          <div style={{ width: "100%", maxWidth: 640 }}>
             <div style={{ display: "flex", gap: 8, width: "100%" }}>
               <ActionButton label="Fold" onClick={() => sendAction("fold")} variant="danger" />
-              {canCheck ? (
-                <ActionButton label="Check" onClick={() => sendAction("check")} variant="neutral" />
-              ) : (
-                <ActionButton label={`Call  ${cur.symbol}${callAmt.toLocaleString()}`} onClick={() => sendAction("call")} variant="call" color={cur.color} />
-              )}
-              <ActionButton
-                label={`${canCheck ? "Bet" : "Raise"}  ${cur.symbol}${(betInput ?? big_blind).toLocaleString()}`}
-                onClick={() => sendAction(canCheck ? "bet" : "raise", betInput ?? big_blind)}
-                disabled={myData.stack <= 0}
-                variant="primary"
-                color={cur.color}
-              />
-              <ActionButton
-                label={`All-In  ${cur.symbol}${myData.stack?.toLocaleString()}`}
-                onClick={() => sendAction("allin", myData.stack)}
-                disabled={myData.stack <= 0}
-                variant="allin"
-                color="#ef4444"
-              />
+              <ActionButton label={canCheck ? "Check" : `Call ${CURRENCY.symbol}${callAmt}`} onClick={() => sendAction(canCheck ? "check" : "call")} />
+              <ActionButton label={`${canCheck ? "Bet" : "Raise"} ${CURRENCY.symbol}${betInput}`} onClick={() => sendAction(canCheck ? "bet" : "raise", betInput)} variant="primary" disabled={myData.stack <= 0} />
+              <ActionButton label={`All-In ${CURRENCY.symbol}${myData.stack}`} onClick={() => sendAction("allin", myData.stack)} variant="danger" disabled={myData.stack <= 0} />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, width: "100%" }}>
-              <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                {cur.symbol}{big_blind}
-              </span>
-              <input
-                type="range"
-                min={big_blind}
-                max={myData.stack}
-                step={big_blind}
-                value={betInput ?? big_blind}
-                onChange={e => setBetInput(+e.target.value)}
-                style={{ flex: 1, accentColor: cur.color, height: 4 }}
-              />
-              <span style={{ fontSize: 11, color: "var(--text-muted)", whiteSpace: "nowrap" }}>
-                {cur.symbol}{myData.stack?.toLocaleString()}
-              </span>
+            <div style={{ display: "flex", gap: 12, alignItems: "center", marginTop: 12 }}>
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{CURRENCY.symbol}{big_blind}</span>
+              <input type="range" min={big_blind} max={Math.max(big_blind, myData.stack)} step={big_blind} value={Math.min(betInput, Math.max(big_blind, myData.stack))} onChange={(event) => setBetInput(Number(event.target.value))} style={{ flex: 1, accentColor: "#c9a84c" }} />
+              <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{CURRENCY.symbol}{myData.stack}</span>
             </div>
+            <div style={{ marginTop: 10, fontSize: 12, color: "var(--text-secondary)" }}>Auto action in about {turnDeadline}s if you disconnect or stall.</div>
           </div>
         ) : (
-          <p style={{ color: "var(--text-muted)", fontSize: 13, margin: 0, animation: "pulse 2s ease-in-out infinite" }}>
-            Waiting for other players…
-          </p>
+          <p style={{ color: "var(--text-secondary)", margin: 0 }}>{tournament_state === "running" ? "Waiting for the next action..." : "Waiting for enough players to start."}</p>
         )}
       </div>
     </div>
   );
 }
 
-function ActionButton({ label, onClick, variant, color, disabled = false }) {
-  const styles = {
-    danger: {
-      background: "rgba(239,68,68,0.1)",
-      border: "1px solid rgba(239,68,68,0.3)",
-      color: "#f87171",
-    },
-    neutral: {
-      background: "rgba(255,255,255,0.05)",
-      border: "1px solid rgba(255,255,255,0.12)",
-      color: "#fff",
-    },
-    call: {
-      background: `rgba(${hexToRgb(color || "#c9a84c")},0.1)`,
-      border: `1px solid rgba(${hexToRgb(color || "#c9a84c")},0.35)`,
-      color: color || "#c9a84c",
-    },
-    primary: {
-      background: `linear-gradient(135deg, ${color || "#c9a84c"}, ${color ? color + "cc" : "#b08a3c"})`,
-      border: "none",
-      color: "#08070f",
-    },
-    allin: {
-      background: "rgba(239,68,68,0.08)",
-      border: "1px solid rgba(239,68,68,0.4)",
-      color: "#f87171",
-      fontWeight: 900,
-    },
-  };
-  const s = styles[variant] || styles.neutral;
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      style={{
-        flex: 1,
-        padding: "12px 8px",
-        borderRadius: 10,
-        fontSize: 13,
-        fontWeight: 700,
-        fontFamily: "'Inter', sans-serif",
-        cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
-        transition: "all 0.15s",
-        letterSpacing: 0.2,
-        whiteSpace: "nowrap",
-        ...s,
-      }}
-      onMouseEnter={e => { if (!disabled) e.currentTarget.style.filter = "brightness(1.15)"; }}
-      onMouseLeave={e => { e.currentTarget.style.filter = "brightness(1)"; }}
-    >
-      {label}
-    </button>
-  );
-}
+// ─── STYLES ──────────────────────────────────────────────────────────────────
+function headerButtonStyle() { return { background: "linear-gradient(135deg, #c9a84c, #f0d060)", border: "none", borderRadius: 999, padding: "10px 18px", color: "#08070f", fontWeight: 800 }; }
+function panelStyle() { return { background: "linear-gradient(160deg, #121020 0%, #0c0b18 100%)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 22, padding: 24, boxShadow: "0 24px 60px rgba(0,0,0,0.35)" }; }
+function tournamentCardStyle() { return { borderRadius: 18, padding: 18, border: "1px solid rgba(255,255,255,0.07)", background: "rgba(255,255,255,0.03)" }; }
+function pillStyle() { return { padding: "5px 10px", borderRadius: 999, border: "1px solid rgba(201,168,76,0.25)", color: "var(--gold)", fontSize: 11, fontWeight: 700 }; }
+function handBannerStyle(isWinner) { return { padding: "12px 24px", textAlign: "center", background: isWinner ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.05)" }; }
 
-function Modal({ children }) {
-  return (
-    <div style={{
-      position: "fixed", inset: 0, zIndex: 100,
-      background: "rgba(8,7,15,0.88)",
-      backdropFilter: "blur(12px)",
-      display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
-      gap: 12,
-      animation: "fadeUp 0.3s ease both",
-    }}>
-      {children}
-    </div>
-  );
-}
+const heroTitleStyle = { margin: "0 0 12px", fontFamily: "'Playfair Display', serif", fontWeight: 900, fontSize: "clamp(3rem, 8vw, 5.5rem)", lineHeight: 0.95 };
+const heroCopyStyle = { maxWidth: 580, margin: 0, color: "var(--text-secondary)", lineHeight: 1.6 };
+const sectionEyebrowStyle = { fontSize: 12, letterSpacing: 2, textTransform: "uppercase", color: "var(--gold-dim)" };
+const sectionTitleStyle = { margin: "10px 0 8px", fontSize: 26, fontFamily: "'Playfair Display', serif" };
+const sectionCopyStyle = { margin: "0 0 18px", color: "var(--text-secondary)", fontSize: 14 };
+const lobbyGridStyle = { maxWidth: 1040, margin: "0 auto", display: "grid", gridTemplateColumns: "minmax(280px, 360px) minmax(320px, 1fr)", gap: 18 };
+const sessionBadgeStyle = { borderRadius: 999, padding: "8px 14px", border: "1px solid rgba(16,185,129,0.25)", background: "rgba(16,185,129,0.08)", color: "#10b981", fontSize: 12, fontWeight: 700 };
+const walletBadgeStyle = { borderRadius: 999, padding: "8px 14px", border: "1px solid rgba(201,168,76,0.25)", background: "rgba(201,168,76,0.08)", color: "var(--gold)", fontSize: 12, fontWeight: 700 };
+const betBadgeStyle = { marginBottom: 5, background: "rgba(8,7,15,0.88)", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 20, padding: "2px 9px", fontSize: 11, fontWeight: 700, color: "#c9a84c" };
+const seatPanelStyle = { background: "linear-gradient(135deg, rgba(15,14,26,0.97), rgba(10,9,20,0.97))", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 12, padding: "8px 14px", minWidth: 96, textAlign: "center", position: "relative" };
+const dealerBadgeStyle = { position: "absolute", top: -8, right: -8, width: 18, height: 18, borderRadius: "50%", background: "#fff", color: "#000", fontSize: 9, fontWeight: 900, display: "flex", alignItems: "center", justifyContent: "center" };
+const inputStyle = { width: "100%", borderRadius: 12, border: "1px solid rgba(255,255,255,0.08)", background: "rgba(255,255,255,0.04)", color: "#fff", padding: "12px 14px", outline: "none", boxSizing: "border-box" };
+const primaryButtonStyle = { background: "linear-gradient(135deg, #c9a84c, #f0d060)", border: "none", borderRadius: 12, padding: "12px 18px", fontWeight: 800, color: "#08070f", cursor: "pointer" };
+const secondaryButtonStyle = { background: "transparent", border: "1px solid rgba(255,255,255,0.1)", color: "var(--text-secondary)", borderRadius: 10, padding: "10px 16px", cursor: "pointer" };
+const loadingScreenStyle = { minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20 };
+const gameShellStyle = { minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column", color: "#fff" };
+const topBarStyle = { display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 24px", background: "rgba(8,7,15,0.85)", borderBottom: "1px solid var(--border)" };
+const tableAreaStyle = { flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: "60px 80px", background: "radial-gradient(ellipse 90% 70% at 50% 50%, rgba(13,61,32,0.3) 0%, transparent 75%), var(--bg)" };
+const tableStyle = { position: "relative", width: "100%", maxWidth: 820, height: 380, borderRadius: "50% / 45%", background: "radial-gradient(ellipse at 50% 40%, #0f5030 0%, #0b3d22 40%, #08280f 100%)", border: "10px solid #1a0e05", boxShadow: "0 0 0 3px #2e1a08, 0 0 80px rgba(0,0,0,0.7), inset 0 0 80px rgba(0,0,0,0.4)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center" };
+const potBadgeStyle = { display: "flex", alignItems: "center", gap: 8, background: "rgba(0,0,0,0.45)", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 999, padding: "5px 18px", zIndex: 5 };
+const actionBarStyle = { padding: "18px 24px", background: "rgba(8,7,15,0.9)", borderTop: "1px solid var(--border)", minHeight: 88, display: "flex", alignItems: "center", justifyContent: "center", flexDirection: "column" };

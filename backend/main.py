@@ -1,183 +1,314 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
-from typing import Dict, List
+import asyncio
 import json
-import uuid
+import logging
 import os
-from engine import PokerEngine
+import secrets
+import uuid
+from contextlib import asynccontextmanager
+from typing import Dict, List, Optional
 
-# --- Database & Web3 Imports ---
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
+
 import models
-from database import engine, SessionLocal
-import blockchain  # 👈 The Oracle Bridge
+from config import settings, validate_settings
+from database import SessionLocal, engine
+from tournament_manager import TournamentManager
 
-# Create the database file if it doesn't exist
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+logger = logging.getLogger("poker.api")
+
 models.Base.metadata.create_all(bind=engine)
+tournament_manager = TournamentManager()
 
-app = FastAPI()
-active_games: Dict[str, PokerEngine] = {}
+
+def log_event(message: str, **fields):
+    logger.info("%s %s", message, json.dumps(fields, default=str))
+
+
+class DemoSessionRequest(BaseModel):
+    display_name: Optional[str] = None
+    reconnect_token: Optional[str] = None
+    wallet_address: Optional[str] = None
+
+
+class JoinTournamentRequest(BaseModel):
+    player_id: str
+    reconnect_token: str
+
+
+class LeaveTournamentRequest(BaseModel):
+    player_id: str
+    reconnect_token: str
+
 
 class ConnectionManager:
     def __init__(self):
         self.active_connections: Dict[str, List[dict]] = {}
 
-    async def connect(self, websocket: WebSocket, table_id: str, player_id: str):
+    async def connect(self, websocket: WebSocket, tournament_id: str, player_id: str):
         await websocket.accept()
-        if table_id not in self.active_connections:
-            self.active_connections[table_id] = []
-        self.active_connections[table_id].append({"ws": websocket, "player_id": player_id})
+        self.active_connections.setdefault(tournament_id, []).append({"ws": websocket, "player_id": player_id})
 
-    def disconnect(self, websocket: WebSocket, table_id: str):
-        if table_id in self.active_connections:
-            self.active_connections[table_id] = [c for c in self.active_connections[table_id] if c["ws"] != websocket]
-            if not self.active_connections[table_id]:
-                del self.active_connections[table_id]
+    def disconnect(self, websocket: WebSocket, tournament_id: str):
+        if tournament_id in self.active_connections:
+            self.active_connections[tournament_id] = [
+                conn for conn in self.active_connections[tournament_id] if conn["ws"] != websocket
+            ]
+            if not self.active_connections[tournament_id]:
+                del self.active_connections[tournament_id]
 
-    async def broadcast_state(self, table_id: str, game_engine: PokerEngine):
-        if table_id in self.active_connections:
-            for conn in self.active_connections[table_id][:]:
-                try:
-                    safe_state = game_engine.get_game_state(viewer_id=conn["player_id"])
-                    await conn["ws"].send_text(json.dumps({"type": "game_state", "data": safe_state}))
-                except Exception:
-                    self.disconnect(conn["ws"], table_id)
+    async def send_event(self, websocket: WebSocket, event_type: str, data: dict):
+        await websocket.send_text(json.dumps({"type": event_type, "data": data}))
+
+    async def broadcast_table_state(self, runtime):
+        tournament_id = runtime.tournament_id
+        for conn in self.active_connections.get(tournament_id, [])[:]:
+            try:
+                viewer_state = runtime.to_table_state(viewer_id=conn["player_id"])
+                await conn["ws"].send_text(json.dumps({"type": "table_state", "data": viewer_state}))
+            except Exception:
+                self.disconnect(conn["ws"], tournament_id)
+
+    async def broadcast_event(self, tournament_id: str, event_type: str, data: dict):
+        for conn in self.active_connections.get(tournament_id, [])[:]:
+            try:
+                await conn["ws"].send_text(json.dumps({"type": event_type, "data": data}))
+            except Exception:
+                self.disconnect(conn["ws"], tournament_id)
+
 
 manager = ConnectionManager()
 
-@app.websocket("/ws/table/{table_id}")
-async def websocket_endpoint(websocket: WebSocket, table_id: str, mode: str = "cash", wallet: str = None):
-    
-    # 🦊 THE WEB3 UPGRADE: Use their real wallet address if they connected one!
-    player_id = wallet.lower() if wallet else f"player_{uuid.uuid4().hex[:6]}"
-    room_key = f"{table_id}-{mode}"
-    
-    # ==========================================
-    # 🏦 THE CASHIER: DB LOOKUP & BUY-IN
-    # ==========================================
-    db = SessionLocal()
-    db_player = db.query(models.PlayerDB).filter(models.PlayerDB.id == player_id).first()
-    
-    # 1. If new player, create their account with 10,000 chips
-    if not db_player:
-        db_player = models.PlayerDB(id=player_id, chip_balance=10000)
-        db.add(db_player)
-        db.commit()
-        db.refresh(db_player)
-        
-    # 2. Check if they have enough to buy in
-    buy_in_amount = 1000
-    if db_player.chip_balance < buy_in_amount:
-        await websocket.accept()
-        await websocket.close(code=1008, reason="Insufficient funds in Bankroll")
-        db.close()
-        return
-        
-    # 3. Deduct buy-in from their DB bankroll
-    db_player.chip_balance -= buy_in_amount
-    db.commit()
-    # ==========================================
 
-    # --- Table Management ---
-    if room_key in active_games:
-        if getattr(active_games[room_key], "tournament_state", "") == "finished":
-            del active_games[room_key]
-            
-    if room_key not in active_games:
-        active_games[room_key] = PokerEngine(room_key, mode=mode)
-        
-    game_engine = active_games[room_key]
-    
-    # Sit the player down with the chips we just deducted
-    success = game_engine.add_player(player_id, buy_in_amount)
-    if not success:
-        # If the table is full, refund the buy-in to the DB before rejecting them!
-        db_player.chip_balance += buy_in_amount
+def get_player_by_token(db, player_id: str, reconnect_token: str):
+    return (
+        db.query(models.PlayerDB)
+        .filter(models.PlayerDB.id == player_id, models.PlayerDB.reconnect_token == reconnect_token)
+        .first()
+    )
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    issues = validate_settings()
+    for issue in issues:
+        logger.warning("Config issue: %s", issue)
+    tournament_manager.ensure_seed_data()
+    tournament_manager.start_background_task()
+    broadcast_task = asyncio.create_task(periodic_state_broadcast())
+    yield
+    broadcast_task.cancel()
+
+
+app = FastAPI(lifespan=lifespan)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=settings.cors_origins != ["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+async def periodic_state_broadcast():
+    while True:
+        try:
+            for runtime in list(tournament_manager.runtimes.values()):
+                await manager.broadcast_table_state(runtime)
+        except Exception:
+            logger.exception("Periodic broadcast failed")
+        await asyncio.sleep(1)
+
+
+@app.get("/healthz")
+async def healthz():
+    return {
+        "status": "ok",
+        "demo_mode": settings.demo_mode,
+        "wallet_connect": settings.enable_wallet_connect,
+        "onchain_payout": settings.enable_onchain_payout,
+    }
+
+
+@app.post("/api/demo/session")
+async def create_demo_session(payload: DemoSessionRequest):
+    db = SessionLocal()
+    try:
+        if payload.reconnect_token:
+            player = (
+                db.query(models.PlayerDB)
+                .filter(models.PlayerDB.reconnect_token == payload.reconnect_token)
+                .first()
+            )
+            if player:
+                if payload.wallet_address:
+                    player.wallet_address = payload.wallet_address.lower()
+                if payload.display_name:
+                    player.display_name = payload.display_name.strip()[:24]
+                db.commit()
+                return {
+                    "player_id": player.id,
+                    "display_name": player.display_name,
+                    "chip_balance": player.chip_balance,
+                    "reconnect_token": player.reconnect_token,
+                    "wallet_address": player.wallet_address,
+                }
+
+        display_name = (payload.display_name or "Guest").strip()[:24] or "Guest"
+        player = models.PlayerDB(
+            id=f"player_{uuid.uuid4().hex[:8]}",
+            display_name=display_name,
+            reconnect_token=secrets.token_urlsafe(24),
+            chip_balance=10000,
+            wallet_address=payload.wallet_address.lower() if payload.wallet_address else None,
+        )
+        db.add(player)
         db.commit()
+        return {
+            "player_id": player.id,
+            "display_name": player.display_name,
+            "chip_balance": player.chip_balance,
+            "reconnect_token": player.reconnect_token,
+            "wallet_address": player.wallet_address,
+        }
+    finally:
         db.close()
+
+
+@app.get("/api/tournaments")
+async def list_tournaments():
+    return {"items": tournament_manager.list_tournaments()}
+
+
+@app.post("/api/tournaments/{tournament_id}/join")
+async def join_tournament(tournament_id: str, payload: JoinTournamentRequest):
+    db = SessionLocal()
+    try:
+        player = get_player_by_token(db, payload.player_id, payload.reconnect_token)
+        if not player:
+            raise HTTPException(status_code=401, detail="Invalid session token.")
+    finally:
+        db.close()
+
+    try:
+        runtime, joined = tournament_manager.join_tournament(tournament_id, payload.player_id)
+        log_event("player_joined", tournament_id=tournament_id, player_id=payload.player_id, seat=joined["seat_index"])
+        await manager.broadcast_event(
+            tournament_id,
+            "table_joined",
+            {"player_id": payload.player_id, "seat_index": joined["seat_index"], "tournament_id": tournament_id},
+        )
+        await manager.broadcast_table_state(runtime)
+        return {
+            **joined,
+            "state": runtime.state,
+            "summary": runtime.to_summary(),
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/tournaments/{tournament_id}/leave")
+async def leave_tournament(tournament_id: str, payload: LeaveTournamentRequest):
+    db = SessionLocal()
+    try:
+        player = get_player_by_token(db, payload.player_id, payload.reconnect_token)
+        if not player:
+            raise HTTPException(status_code=401, detail="Invalid session token.")
+    finally:
+        db.close()
+
+    try:
+        tournament_manager.leave_tournament(tournament_id, payload.player_id)
+        runtime = tournament_manager.get_or_create_runtime(tournament_id)
+        log_event("player_left", tournament_id=tournament_id, player_id=payload.player_id)
+        await manager.broadcast_table_state(runtime)
+        return {"ok": True}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.websocket("/ws/table/{tournament_id}")
+async def websocket_endpoint(websocket: WebSocket, tournament_id: str, player_id: str, token: str):
+    db = SessionLocal()
+    try:
+        player = get_player_by_token(db, player_id, token)
+    finally:
+        db.close()
+
+    if not player:
         await websocket.accept()
-        await websocket.close(code=1008, reason="Table full or registration closed")
+        await manager.send_event(websocket, "error", {"message": "Invalid session token."})
+        await websocket.close(code=1008)
         return
-        
-    await manager.connect(websocket, room_key, player_id)
-    await manager.broadcast_state(room_key, game_engine)
-    
+
+    try:
+        runtime = tournament_manager.get_or_create_runtime(tournament_id)
+    except KeyError:
+        await websocket.accept()
+        await manager.send_event(websocket, "error", {"message": "Tournament not found."})
+        await websocket.close(code=1008)
+        return
+
+    if player_id not in runtime.engine.players:
+        await websocket.accept()
+        await manager.send_event(websocket, "error", {"message": "Join the tournament before connecting."})
+        await websocket.close(code=1008)
+        return
+
+    await manager.connect(websocket, tournament_id, player_id)
+    tournament_manager.mark_connected(tournament_id, player_id)
+    await manager.send_event(websocket, "table_joined", {"player_id": player_id, "tournament_id": tournament_id})
+    await manager.broadcast_table_state(runtime)
+
     try:
         while True:
-            data = await websocket.receive_text()
+            raw_data = await websocket.receive_text()
             try:
-                payload = json.loads(data)
-                action = payload.get("action")
-                amount = int(payload.get("amount", 0))
-                
-                if action == "start_tournament":
-                    game_engine.start_hand()
-                    await manager.broadcast_state(room_key, game_engine)
-                    continue
+                payload = json.loads(raw_data)
+            except json.JSONDecodeError:
+                await manager.send_event(websocket, "error", {"message": "Invalid JSON payload."})
+                continue
 
-                if action == "new_hand":
-                    game_engine.start_hand()
-                    await manager.broadcast_state(room_key, game_engine)
-                    continue
+            action = payload.get("action")
+            amount = int(payload.get("amount", 0))
+            if action not in {"fold", "check", "call", "bet", "raise", "allin"}:
+                await manager.send_event(websocket, "error", {"message": "Unsupported action."})
+                continue
 
-                if action in ["fold", "check", "call", "bet", "raise", "allin"]:
-                    game_engine.process_action(player_id, action, amount)
-                    await manager.broadcast_state(room_key, game_engine)
-                    
-                    # ==========================================
-                    # 🏆 THE ORACLE: PAYOUT TRIGGER
-                    # ==========================================
-                    # Check if the tournament just finished, and make sure we haven't paid out yet
-                    if getattr(game_engine, "tournament_state", "") == "finished" and not getattr(game_engine, "payout_triggered", False):
-                        game_engine.payout_triggered = True # Lock it so we don't double-pay!
-                        
-                        # Get the winner's wallet address from the results
-                        winners = getattr(game_engine, "result", {}).get("winners", [])
-                        if winners:
-                            winner_wallet = winners[0]
-                            print(f"🎉 Tournament over! Initiating payout for {winner_wallet}")
-                            
-                            # Run the payout! 
-                            blockchain.payout_winner(table_id, winner_wallet)
-                    # ==========================================
-                    
-            except Exception as e:
-                print(f"Ignored invalid action payload: {e}")
-                
+            processed = runtime.engine.process_action(player_id, action, amount)
+            if not processed:
+                await manager.send_event(websocket, "error", {"message": "Action rejected by table state."})
+                continue
+
+            tournament_manager.persist_runtime(runtime)
+            tournament_manager.log_event(tournament_id, player_id, "player_action", {"action": action, "amount": amount})
+            if runtime.engine.result:
+                await manager.broadcast_event(
+                    tournament_id,
+                    "hand_result",
+                    runtime.engine.result,
+                )
+            if runtime.engine.tournament_finished():
+                tournament_manager.finish_tournament(tournament_id)
+                await manager.broadcast_event(
+                    tournament_id,
+                    "tournament_finished",
+                    {"winner": runtime.engine.result["winners"][0] if runtime.engine.result else None},
+                )
+            await manager.broadcast_table_state(runtime)
     except WebSocketDisconnect:
         pass
-    except Exception as e:
-        print(f"Connection Error: {e}")
     finally:
-        # ==========================================
-        # 🏦 THE CASHIER: CASH OUT
-        # ==========================================
-        # Capture final stack BEFORE remove_player deletes the cash game player
-        final_stack = game_engine.players.get(player_id, {}).get("stack", 0)
-        game_engine.remove_player(player_id)
+        tournament_manager.mark_disconnected(tournament_id, player_id)
+        manager.disconnect(websocket, tournament_id)
+        log_event("player_disconnected", tournament_id=tournament_id, player_id=player_id)
 
-        try:
-            # Re-query to avoid stale SQLAlchemy session after long-lived connections
-            db_player = db.query(models.PlayerDB).filter(models.PlayerDB.id == player_id).first()
-            if db_player and final_stack > 0:
-                db_player.chip_balance += final_stack
-                db.commit()
-        except Exception as e:
-            print(f"Cashout DB error for {player_id}: {e}")
-            db.rollback()
-        finally:
-            db.close()
-        # ==========================================
 
-        manager.disconnect(websocket, room_key)
-
-        # Clean up empty cash game rooms to prevent memory leaks
-        if room_key in active_games and not active_games[room_key].players:
-            del active_games[room_key]
-
-        await manager.broadcast_state(room_key, game_engine)
-
-# ─── SERVE BUILT FRONTEND (production) ───────────────────────────────────────
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(STATIC_DIR):
     assets_dir = os.path.join(STATIC_DIR, "assets")

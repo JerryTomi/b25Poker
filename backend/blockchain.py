@@ -1,65 +1,83 @@
+import logging
 import os
-from web3 import Web3
-from dotenv import load_dotenv
 
-# Load the secret variables from the .env file
+from dotenv import load_dotenv
+from web3 import Web3
+
 load_dotenv()
 
-RPC_URL = os.getenv("BASE_SEPOLIA_RPC")
-PRIVATE_KEY = os.getenv("SERVER_PRIVATE_KEY")
-CONTRACT_ADDRESS = os.getenv("ESCROW_CONTRACT_ADDRESS")
+logger = logging.getLogger("poker.blockchain")
 
-# Connect to Base Sepolia
-w3 = Web3(Web3.HTTPProvider(RPC_URL))
+RPC_URL = os.getenv("BASE_SEPOLIA_RPC", "")
+PRIVATE_KEY = os.getenv("SERVER_PRIVATE_KEY", "")
+CONTRACT_ADDRESS = os.getenv("ESCROW_CONTRACT_ADDRESS", "")
+CHAIN_ID = int(os.getenv("CHAIN_ID", "84532"))
 
-# The ABI tells Python exactly what the awardWinner function looks like
+w3 = Web3(Web3.HTTPProvider(RPC_URL)) if RPC_URL else None
+
 ESCROW_ABI = [
     {
         "inputs": [
             {"internalType": "string", "name": "tableId", "type": "string"},
-            {"internalType": "address", "name": "winner", "type": "address"}
+            {"internalType": "address", "name": "requiredNft", "type": "address"},
+        ],
+        "name": "createTournament",
+        "outputs": [],
+        "stateMutability": "nonpayable",
+        "type": "function",
+    },
+    {
+        "inputs": [
+            {"internalType": "string", "name": "tableId", "type": "string"},
+            {"internalType": "address", "name": "winner", "type": "address"},
         ],
         "name": "awardWinner",
         "outputs": [],
         "stateMutability": "nonpayable",
-        "type": "function"
-    }
+        "type": "function",
+    },
 ]
 
-def payout_winner(table_id: str, winner_address: str):
-    """Securely signs a transaction to release the prize pool to the winner."""
-    if not PRIVATE_KEY or not CONTRACT_ADDRESS:
-        print("⚠️ Missing blockchain credentials in .env. Skipping payout.")
-        return False
-        
-    try:
-        # 1. Setup the Wallet and Contract
-        account = w3.eth.account.from_key(PRIVATE_KEY)
-        contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=ESCROW_ABI)
-        
-        # Ethereum requires addresses to be "checksummed" (mixed uppercase/lowercase)
-        checksum_winner = w3.to_checksum_address(winner_address)
-        
-        print(f"⛓️ Initiating Blockchain Payout for {checksum_winner} on {table_id}...")
 
-        # 2. Build the Transaction
-        nonce = w3.eth.get_transaction_count(account.address)
-        tx = contract.functions.awardWinner(table_id, checksum_winner).build_transaction({
-            'chainId': 84532, # 84532 is Base Sepolia
-            'gas': 200000,
-            'gasPrice': w3.eth.gas_price,
-            'nonce': nonce,
-        })
-        
-        # 3. Sign it with the Server's Private Key
-        signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
-        
-        # 4. Broadcast it to the Base Network
-        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-        
-        print(f"✅ Payout Successful! TX Hash: {w3.to_hex(tx_hash)}")
-        return True
-        
-    except Exception as e:
-        print(f"❌ Blockchain payout failed: {e}")
+def _contract():
+    if not (w3 and PRIVATE_KEY and CONTRACT_ADDRESS):
+        return None, None
+    account = w3.eth.account.from_key(PRIVATE_KEY)
+    contract = w3.eth.contract(address=Web3.to_checksum_address(CONTRACT_ADDRESS), abi=ESCROW_ABI)
+    return account, contract
+
+
+def _send_transaction(builder):
+    account, contract = _contract()
+    if not account or not contract:
+        logger.warning("Blockchain credentials are missing. Skipping optional on-chain action.")
         return False
+
+    try:
+        nonce = w3.eth.get_transaction_count(account.address)
+        tx = builder(contract).build_transaction(
+            {
+                "chainId": CHAIN_ID,
+                "gas": 250000,
+                "gasPrice": w3.eth.gas_price,
+                "nonce": nonce,
+            }
+        )
+        signed_tx = w3.eth.account.sign_transaction(tx, private_key=PRIVATE_KEY)
+        tx_hash = w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+        logger.info("Blockchain transaction submitted", extra={"tx_hash": w3.to_hex(tx_hash)})
+        return True
+    except Exception as exc:
+        logger.exception("Blockchain transaction failed: %s", exc)
+        return False
+
+
+def create_tournament(table_id: str, required_nft: str | None):
+    nft_address = required_nft or "0x0000000000000000000000000000000000000000"
+    checksum_nft = Web3.to_checksum_address(nft_address)
+    return _send_transaction(lambda contract: contract.functions.createTournament(table_id, checksum_nft))
+
+
+def payout_winner(table_id: str, winner_address: str):
+    checksum_winner = Web3.to_checksum_address(winner_address)
+    return _send_transaction(lambda contract: contract.functions.awardWinner(table_id, checksum_winner))
