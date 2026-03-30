@@ -321,119 +321,207 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
     }
   };
 
-  // Combine the arrays for the UI render
   const allTournaments = [...web3Tournaments, ...tournaments];
 
-  return (
-    <div style={{ minHeight: "100vh", background: "var(--bg)", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden" }}>
-      <div style={{ position: "fixed", inset: 0, zIndex: 0, background: "radial-gradient(ellipse 80% 60% at 50% 70%, rgba(13,61,32,0.45) 0%, transparent 70%), radial-gradient(ellipse 60% 40% at 80% 20%, rgba(201,168,76,0.09) 0%, transparent 60%), #08070f" }} />
+  const tableIcon = (t) => t.isWeb3 ? "♛" : "♠";
+  const tableAccent = (t) => t.isWeb3 ? "#a78bfa" : "#c9a84c";
+  const tableBadgeBg = (t) => t.isWeb3 ? "rgba(124,58,237,0.15)" : "rgba(16,185,129,0.15)";
+  const tableBadgeColor = (t) => t.isWeb3 ? "#a78bfa" : "#10b981";
+  const tableBadgeLabel = (t) => t.isWeb3 ? "NFT GATED" : "OPEN TABLE";
 
-      <header style={{ position: "relative", zIndex: 10, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 32px", borderBottom: "1px solid var(--border)", background: "rgba(8,7,15,0.78)", backdropFilter: "blur(18px)" }}>
-        <div>
-          <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 24, color: "var(--gold)", fontWeight: 800 }}>Royal Flush</div>
-          <div style={{ fontSize: 12, color: "var(--text-muted)", letterSpacing: 2, textTransform: "uppercase" }}>Web3 Casino Prototype</div>
+  return (
+    <div style={{ minHeight: "100vh", background: "#08070f", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", fontFamily: "'Inter', sans-serif", color: "#fff" }}>
+
+      {/* Layered background glows */}
+      <div style={{ position: "fixed", inset: 0, zIndex: 0, pointerEvents: "none",
+        background: "radial-gradient(ellipse 100% 55% at 50% 85%, rgba(13,61,32,0.55) 0%, transparent 65%), radial-gradient(ellipse 55% 35% at 85% 8%, rgba(201,168,76,0.07) 0%, transparent 60%), #08070f" }} />
+
+      {/* ── HEADER ── */}
+      <header style={{ position: "relative", zIndex: 20, display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 36px", borderBottom: "1px solid rgba(255,255,255,0.055)", background: "rgba(8,7,15,0.75)", backdropFilter: "blur(20px)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 22, color: "#c9a84c" }}>♠</span>
+          <div>
+            <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 20, color: "#c9a84c", fontWeight: 900, lineHeight: 1 }}>Royal Flush</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", letterSpacing: 3, textTransform: "uppercase", marginTop: 2 }}>B25Ventures</div>
+          </div>
         </div>
 
-        <div style={{ display: "flex", gap: 12, alignItems: "center" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+          {/* Contract status dot */}
+          <div title={contractStatus === "ok" ? "On-chain contract responding" : "On-chain contract unreachable"} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: contractStatus === "ok" ? "#10b981" : contractStatus === "error" ? "rgba(239,68,68,0.7)" : "rgba(255,255,255,0.2)" }}>
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block", boxShadow: contractStatus === "ok" ? "0 0 6px #10b981" : "none" }} />
+            <span style={{ display: "none" }}>Chain</span>
+          </div>
+
           {session ? (
-            <div style={sessionBadgeStyle}>
-              {session.display_name} · {CURRENCY.symbol}{session.chip_balance?.toLocaleString?.() ?? session.chip_balance}
+            <div style={{ borderRadius: 999, padding: "7px 14px", border: "1px solid rgba(16,185,129,0.25)", background: "rgba(16,185,129,0.07)", color: "#10b981", fontSize: 12, fontWeight: 700 }}>
+              {session.display_name} · {CURRENCY.symbol}{(session.chip_balance ?? 0).toLocaleString()}
             </div>
           ) : null}
 
           {ENABLE_WALLET_CONNECT ? (
             walletAddress ? (
-              <div style={walletBadgeStyle}>{walletAddress.slice(0, 6)}...{walletAddress.slice(-4)}</div>
+              <div style={{ borderRadius: 999, padding: "7px 14px", border: "1px solid rgba(201,168,76,0.3)", background: "rgba(201,168,76,0.07)", color: "#c9a84c", fontSize: 12, fontWeight: 700 }}>
+                {walletAddress.slice(0, 6)}…{walletAddress.slice(-4)}
+              </div>
             ) : (
-              <button onClick={connectWallet} style={headerButtonStyle()}>Connect Wallet</button>
+              <button onClick={connectWallet} style={{ background: "linear-gradient(135deg,#c9a84c,#f0d060)", border: "none", borderRadius: 999, padding: "10px 20px", color: "#08070f", fontWeight: 800, fontSize: 13, cursor: "pointer" }}>
+                Connect Wallet
+              </button>
             )
           ) : null}
         </div>
       </header>
 
-      <main style={{ position: "relative", zIndex: 10, flex: 1, padding: "44px 24px 72px" }}>
-        <section style={{ maxWidth: 1040, margin: "0 auto 28px" }}>
-          <h1 style={heroTitleStyle}>High Stakes Tables</h1>
-          <p style={heroCopyStyle}>Connect your wallet to join exclusive NFT-gated tables, or jump into a free play-chip game below to test the engine.</p>
-        </section>
+      {/* ── HERO ── */}
+      <section style={{ position: "relative", zIndex: 10, textAlign: "center", padding: "72px 24px 56px" }}>
+        <div style={{ fontSize: 11, letterSpacing: 6, textTransform: "uppercase", color: "rgba(201,168,76,0.6)", marginBottom: 20, fontWeight: 600 }}>
+          No Limit Texas Hold'em
+        </div>
 
-        <section style={lobbyGridStyle}>
-          <div style={panelStyle()}>
-            <div style={sectionEyebrowStyle}>Demo Profile</div>
-            <h2 style={sectionTitleStyle}>Seat yourself</h2>
-            <p style={sectionCopyStyle}>Profiles persist in local storage so reconnecting to the same browser resumes your bankroll.</p>
+        <h1 style={{
+          fontFamily: "'Playfair Display', serif", fontWeight: 900,
+          fontSize: "clamp(3.8rem, 10vw, 7.5rem)", lineHeight: 0.92,
+          margin: "0 0 28px",
+          background: "linear-gradient(90deg,#c9a84c 0%,#f0d060 28%,#fffbe0 50%,#f0d060 72%,#c9a84c 100%)",
+          backgroundSize: "200% auto",
+          WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+          backgroundClip: "text",
+          animation: "goldShimmer 4s linear infinite",
+        }}>
+          ROYAL<br />FLUSH
+        </h1>
 
-            <label style={{ display: "block", fontSize: 12, color: "var(--text-muted)", marginBottom: 8 }}>Display name</label>
-            <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder="Guest Shark" style={inputStyle} maxLength={24} />
+        <p style={{ maxWidth: 480, margin: "0 auto 36px", color: "rgba(255,255,255,0.45)", fontSize: 15, lineHeight: 1.7 }}>
+          Play poker with real stakes on the blockchain. Connect your wallet,
+          join a table, and take home the prize pool.
+        </p>
 
-            <button onClick={createOrResumeSession} disabled={submitting} style={{ ...primaryButtonStyle, width: "100%", marginTop: 14 }}>
-              {session ? "Refresh Demo Session" : "Create Demo Session"}
+        {/* Session creation — inline in hero */}
+        {!session ? (
+          <div style={{ display: "flex", gap: 0, maxWidth: 380, margin: "0 auto", borderRadius: 14, overflow: "hidden", border: "1px solid rgba(201,168,76,0.25)", background: "rgba(255,255,255,0.04)" }}>
+            <input
+              value={displayName}
+              onChange={e => setDisplayName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && createOrResumeSession()}
+              placeholder="Your name…"
+              maxLength={24}
+              style={{ flex: 1, background: "transparent", border: "none", outline: "none", padding: "14px 18px", color: "#fff", fontSize: 14 }}
+            />
+            <button
+              onClick={createOrResumeSession}
+              disabled={submitting}
+              style={{ background: "linear-gradient(135deg,#c9a84c,#f0d060)", border: "none", padding: "14px 22px", color: "#08070f", fontWeight: 800, fontSize: 13, cursor: submitting ? "not-allowed" : "pointer", opacity: submitting ? 0.6 : 1, whiteSpace: "nowrap" }}>
+              {submitting ? "…" : "Enter Casino"}
             </button>
-
-            {banner ? <p style={{ marginTop: 14, color: "#10b981", fontSize: 13 }}>{banner}</p> : null}
-            {error ? <p style={{ marginTop: 14, color: "#f87171", fontSize: 13 }}>{error}</p> : null}
           </div>
+        ) : (
+          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 999, padding: "10px 20px" }}>
+            <span style={{ fontSize: 18 }}>♠</span>
+            <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>Welcome back, {session.display_name}</span>
+            <button onClick={createOrResumeSession} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", padding: 0 }}>refresh</button>
+          </div>
+        )}
 
-          <div style={panelStyle()}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center" }}>
-              <div>
-                <div style={sectionEyebrowStyle}>Sit-and-Go Lobby</div>
-                <h2 style={sectionTitleStyle}>Join a Table</h2>
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                {loading || submitting ? <Spinner size={30} /> : null}
-                <div style={{
-                  display: "flex", alignItems: "center", gap: 6,
-                  fontSize: 11, fontWeight: 700, padding: "5px 10px", borderRadius: 999,
-                  background: contractStatus === "ok" ? "rgba(16,185,129,0.1)" : contractStatus === "error" ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
-                  border: `1px solid ${contractStatus === "ok" ? "rgba(16,185,129,0.3)" : contractStatus === "error" ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.1)"}`,
-                  color: contractStatus === "ok" ? "#10b981" : contractStatus === "error" ? "#f87171" : "var(--text-muted)",
-                }}>
-                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
-                  {contractStatus === "ok" ? "Contract Live" : contractStatus === "error" ? "Contract Unreachable" : "Checking..."}
-                </div>
-              </div>
-            </div>
+        {banner ? <p style={{ marginTop: 18, color: "#10b981", fontSize: 13 }}>{banner}</p> : null}
+        {error ? <p style={{ marginTop: 14, color: "#f87171", fontSize: 13 }}>{error}</p> : null}
+      </section>
 
-            <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
-              {allTournaments.map((tournament) => {
-                const isJoinable = tournament.state === "registering" || tournament.state === "countdown";
-                return (
-                  <div key={tournament.id} style={tournamentCardStyle()}>
-                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "flex-start" }}>
-                      <div>
-                        {tournament.isWeb3 ? (
-                          <div style={{ display: "inline-block", background: "rgba(124, 58, 237, 0.15)", color: "#a78bfa", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, letterSpacing: 1, marginBottom: 8 }}>NFT GATED</div>
-                        ) : (
-                          <div style={{ display: "inline-block", background: "rgba(16, 185, 129, 0.15)", color: "#10b981", fontSize: 10, fontWeight: 900, padding: "3px 8px", borderRadius: 20, letterSpacing: 1, marginBottom: 8 }}>OPEN TABLE</div>
-                        )}
-                        <div style={{ fontSize: 18, fontWeight: 800 }}>{tournament.title}</div>
-                        <div style={{ marginTop: 6, fontSize: 13, color: "var(--text-secondary)" }}>
-                           {tournament.desc || (tournament.state === "countdown" ? `Starts in ${tournament.countdown_remaining}s` : tournament.state === "running" ? "Tournament is live" : "Registering now")}
-                        </div>
-                      </div>
-                      <span style={pillStyle()}>{tournament.seated_count}/{tournament.max_seats}</span>
-                    </div>
-
-                    <div style={{ marginTop: 14, display: "flex", justifyContent: "space-between", color: "var(--text-muted)", fontSize: 12 }}>
-                      {tournament.isWeb3 ? (
-                        <span style={{ color: "#a78bfa", fontWeight: 700 }}>Buy-in: {tournament.buy_in_usdc} USDC</span>
-                      ) : (
-                        <span style={{ color: "#10b981", fontWeight: 700 }}>Buy-in: {CURRENCY.symbol}{tournament.buy_in_chips?.toLocaleString()}</span>
-                      )}
-                      <span>6-Max SNG</span>
-                    </div>
-
-                    <button onClick={() => handleJoin(tournament)} disabled={submitting || !isJoinable} style={{ ...primaryButtonStyle, marginTop: 16, width: "100%", opacity: isJoinable ? 1 : 0.55 }}>
-                      {isJoinable ? "Join Table" : tournament.state === "running" ? "In Progress" : "Closed"}
-                    </button>
+      {/* ── TOURNAMENT CARDS ── */}
+      <section style={{ position: "relative", zIndex: 10, maxWidth: 1140, margin: "0 auto", padding: "0 24px 80px", width: "100%" }}>
+        {loading && allTournaments.length === 0 ? (
+          <div style={{ textAlign: "center", paddingTop: 40 }}><Spinner size={48} /></div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+            {allTournaments.map(t => {
+              const isJoinable = t.state === "registering" || t.state === "countdown";
+              const accent = tableAccent(t);
+              return (
+                <div key={t.id} style={{
+                  borderRadius: 22, padding: 28,
+                  background: "linear-gradient(155deg, rgba(18,16,36,0.95) 0%, rgba(11,10,22,0.98) 100%)",
+                  border: `1px solid rgba(255,255,255,0.07)`,
+                  boxShadow: `0 24px 60px rgba(0,0,0,0.45)`,
+                  display: "flex", flexDirection: "column", gap: 0,
+                  transition: "transform 0.2s, box-shadow 0.2s",
+                  cursor: "default",
+                }}
+                  onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = `0 32px 80px rgba(0,0,0,0.55), 0 0 0 1px ${accent}33`; }}
+                  onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 24px 60px rgba(0,0,0,0.45)"; }}
+                >
+                  {/* Badge */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: tableBadgeBg(t), color: tableBadgeColor(t) }}>
+                      {tableBadgeLabel(t)}
+                    </span>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: accent, border: `1px solid ${accent}44`, borderRadius: 999, padding: "4px 10px" }}>
+                      {t.seated_count}/{t.max_seats}
+                    </span>
                   </div>
-                );
-              })}
-            </div>
+
+                  {/* Icon + Title */}
+                  <div style={{ fontSize: 36, color: accent, marginBottom: 10, lineHeight: 1 }}>{tableIcon(t)}</div>
+                  <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>{t.title}</div>
+                  <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 20, flex: 1 }}>
+                    {t.desc || (t.state === "countdown" ? `Starts in ${t.countdown_remaining}s` : t.state === "running" ? "Tournament is live" : t.isWeb3 ? "Connect wallet & verify NFT to enter." : "Sit down and leave whenever you like.")}
+                  </div>
+
+                  {/* Buy-in row */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, fontSize: 13 }}>
+                    {t.isWeb3 ? (
+                      <span style={{ color: "#a78bfa", fontWeight: 800 }}>Buy-in: {t.buy_in_usdc} USDC</span>
+                    ) : (
+                      <span style={{ color: "#c9a84c", fontWeight: 800 }}>Buy-in: {CURRENCY.symbol}{(t.buy_in_chips ?? 1000).toLocaleString()}</span>
+                    )}
+                    <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>6-Max SNG</span>
+                  </div>
+
+                  {/* Join button */}
+                  <button
+                    onClick={() => handleJoin(t)}
+                    disabled={submitting || !isJoinable}
+                    style={{
+                      width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+                      fontWeight: 800, fontSize: 14, cursor: submitting || !isJoinable ? "not-allowed" : "pointer",
+                      opacity: isJoinable ? 1 : 0.45,
+                      background: isJoinable
+                        ? (t.isWeb3 ? "linear-gradient(135deg,#7c3aed,#a78bfa)" : "linear-gradient(135deg,#c9a84c,#f0d060)")
+                        : "rgba(255,255,255,0.06)",
+                      color: isJoinable ? (t.isWeb3 ? "#fff" : "#08070f") : "rgba(255,255,255,0.4)",
+                      transition: "opacity 0.2s",
+                    }}>
+                    {isJoinable
+                      ? (t.isWeb3 ? "Connect & Enter" : "Join Table")
+                      : (t.state === "running" ? "In Progress" : "Closed")}
+                  </button>
+                </div>
+              );
+            })}
           </div>
-        </section>
-      </main>
+        )}
+      </section>
+
+      {/* ── FOOTER ── */}
+      <footer style={{ position: "relative", zIndex: 10, textAlign: "center", padding: "24px 24px 36px", borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+        <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 14, color: "rgba(201,168,76,0.5)", letterSpacing: 1 }}>
+          Powered by B25Ventures
+        </div>
+        <div style={{ marginTop: 6, fontSize: 11, color: "rgba(255,255,255,0.15)", letterSpacing: 1 }}>
+          Base Sepolia Testnet · Play responsibly
+        </div>
+      </footer>
+
+      <style>{`
+        @keyframes goldShimmer {
+          0% { background-position: 0% center; }
+          100% { background-position: 200% center; }
+        }
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+        * { box-sizing: border-box; }
+        input::placeholder { color: rgba(255,255,255,0.25); }
+      `}</style>
     </div>
   );
 }
