@@ -3,7 +3,7 @@ import { ethers } from "ethers";
 
 // ─── WEB3 CONSTANTS ──────────────────────────────────────────────────────────
 const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Base Sepolia USDC
-const ESCROW_ADDRESS = "0x_PASTE_YOUR_DEPLOYED_CONTRACT_ADDRESS_HERE"; // <--- PASTE THIS!
+const ESCROW_ADDRESS = "0xd9145CCE52D386f254917e481eB44e9943F39138"; // <--- PASTE THIS!
 
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) public returns (bool)",
