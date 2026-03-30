@@ -3,7 +3,9 @@ import { ethers } from "ethers";
 
 // ─── WEB3 CONSTANTS ──────────────────────────────────────────────────────────
 const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Base Sepolia USDC
-const ESCROW_ADDRESS = "0xd9145CCE52D386f254917e481eB44e9943F39138"; // <--- PASTE THIS!
+const ESCROW_ADDRESS = "0xd9145CCE52D386f254917e481eB44e9943F39138";
+// Set to true once you confirm getAllTournaments() is live on-chain
+const ONCHAIN_TOURNAMENTS_ENABLED = false;
 
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) public returns (bool)",
@@ -155,34 +157,39 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
   const [banner, setBanner] = useState("");
 
   const fetchTournaments = async () => {
+    // 1. Fetch free API tournaments
     try {
-      // 1. Fetch free API tournaments
       const response = await fetch(apiUrl("/api/tournaments"));
       if (response.ok) {
         const data = await response.json();
         setTournaments(data.items || []);
       }
-
-      // 2. Fetch Web3 Blockchain tournaments
-      const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
-      const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, provider);
-      const data = await escrowContract.getAllTournaments();
-      
-      const formattedWeb3 = data.map(t => ({
-        id: t.id,
-        title: t.title,
-        desc: t.desc,
-        buy_in_usdc: Number(t.buyIn), 
-        requiredNft: t.requiredNft,
-        isWeb3: true,
-        state: "registering", // UI status
-        max_seats: 6,
-        seated_count: 0 // Will sync with backend later
-      }));
-      setWeb3Tournaments(formattedWeb3);
-
     } catch (err) {
-      console.error("Fetch error:", err);
+      console.warn("Could not load API tournaments:", err);
+    }
+
+    // 2. Fetch Web3 Blockchain tournaments (only when explicitly enabled)
+    if (ONCHAIN_TOURNAMENTS_ENABLED) {
+      try {
+        const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
+        const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, provider);
+        const data = await escrowContract.getAllTournaments();
+        const formattedWeb3 = data.map(t => ({
+          id: t.id,
+          title: t.title,
+          desc: t.desc,
+          buy_in_usdc: Number(t.buyIn),
+          requiredNft: t.requiredNft,
+          isWeb3: true,
+          state: "registering",
+          max_seats: 6,
+          seated_count: 0,
+        }));
+        setWeb3Tournaments(formattedWeb3);
+      } catch (err) {
+        console.warn("Could not load on-chain tournaments (contract may not be deployed or ABI mismatch):", err?.shortMessage || err?.message || err);
+        setWeb3Tournaments([]);
+      }
     }
   };
 
