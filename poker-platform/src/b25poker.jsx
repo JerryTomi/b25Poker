@@ -4,8 +4,6 @@ import { ethers } from "ethers";
 // ─── WEB3 CONSTANTS ──────────────────────────────────────────────────────────
 const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e"; // Base Sepolia USDC
 const ESCROW_ADDRESS = "0xd9145CCE52D386f254917e481eB44e9943F39138";
-// Set to true once you confirm getAllTournaments() is live on-chain
-const ONCHAIN_TOURNAMENTS_ENABLED = false;
 
 const ERC20_ABI = [
   "function approve(address spender, uint256 amount) public returns (bool)",
@@ -151,13 +149,14 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
   const [displayName, setDisplayName] = useState(session?.display_name || "");
   const [tournaments, setTournaments] = useState([]);
   const [web3Tournaments, setWeb3Tournaments] = useState([]);
+  const [contractStatus, setContractStatus] = useState("loading"); // "loading" | "ok" | "error"
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [banner, setBanner] = useState("");
 
   const fetchTournaments = async () => {
-    // 1. Fetch free API tournaments
+    // 1. Fetch free open tables from the backend API
     try {
       const response = await fetch(apiUrl("/api/tournaments"));
       if (response.ok) {
@@ -168,28 +167,28 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
       console.warn("Could not load API tournaments:", err);
     }
 
-    // 2. Fetch Web3 Blockchain tournaments (only when explicitly enabled)
-    if (ONCHAIN_TOURNAMENTS_ENABLED) {
-      try {
-        const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
-        const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, provider);
-        const data = await escrowContract.getAllTournaments();
-        const formattedWeb3 = data.map(t => ({
-          id: t.id,
-          title: t.title,
-          desc: t.desc,
-          buy_in_usdc: Number(t.buyIn),
-          requiredNft: t.requiredNft,
-          isWeb3: true,
-          state: "registering",
-          max_seats: 6,
-          seated_count: 0,
-        }));
-        setWeb3Tournaments(formattedWeb3);
-      } catch (err) {
-        console.warn("Could not load on-chain tournaments (contract may not be deployed or ABI mismatch):", err?.shortMessage || err?.message || err);
-        setWeb3Tournaments([]);
-      }
+    // 2. Fetch NFT-gated tournaments from the deployed smart contract
+    try {
+      const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
+      const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, provider);
+      const data = await escrowContract.getAllTournaments();
+      const formattedWeb3 = data.map(t => ({
+        id: t.id,
+        title: t.title,
+        desc: t.desc,
+        buy_in_usdc: Number(t.buyIn),
+        requiredNft: t.requiredNft,
+        isWeb3: true,
+        state: "registering",
+        max_seats: 6,
+        seated_count: 0,
+      }));
+      setWeb3Tournaments(formattedWeb3);
+      setContractStatus("ok");
+    } catch (err) {
+      // Contract unreachable or ABI mismatch — free tables still work fine
+      setContractStatus("error");
+      setWeb3Tournaments([]);
     }
   };
 
@@ -381,7 +380,19 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
                 <div style={sectionEyebrowStyle}>Sit-and-Go Lobby</div>
                 <h2 style={sectionTitleStyle}>Join a Table</h2>
               </div>
-              {loading || submitting ? <Spinner size={30} /> : null}
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {loading || submitting ? <Spinner size={30} /> : null}
+                <div style={{
+                  display: "flex", alignItems: "center", gap: 6,
+                  fontSize: 11, fontWeight: 700, padding: "5px 10px", borderRadius: 999,
+                  background: contractStatus === "ok" ? "rgba(16,185,129,0.1)" : contractStatus === "error" ? "rgba(239,68,68,0.08)" : "rgba(255,255,255,0.04)",
+                  border: `1px solid ${contractStatus === "ok" ? "rgba(16,185,129,0.3)" : contractStatus === "error" ? "rgba(239,68,68,0.25)" : "rgba(255,255,255,0.1)"}`,
+                  color: contractStatus === "ok" ? "#10b981" : contractStatus === "error" ? "#f87171" : "var(--text-muted)",
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
+                  {contractStatus === "ok" ? "Contract Live" : contractStatus === "error" ? "Contract Unreachable" : "Checking..."}
+                </div>
+              </div>
             </div>
 
             <div style={{ display: "grid", gap: 12, marginTop: 18 }}>
