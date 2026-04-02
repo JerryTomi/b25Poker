@@ -302,10 +302,6 @@ class TournamentManager:
             tournament.started_at = datetime.utcnow()
             tournament.updated_at = datetime.utcnow()
             db.add(models.ActionLogDB(tournament_id=tournament_id, event_type="tournament_started"))
-            if settings.enable_onchain_payout and not runtime.chain_created:
-                blockchain.create_tournament(tournament_id, runtime.required_nft)
-                runtime.chain_created = True
-            db.commit()
         finally:
             db.close()
         self.persist_runtime(runtime)
@@ -346,10 +342,25 @@ class TournamentManager:
         finally:
             db.close()
 
-        if settings.enable_onchain_payout and winner_id and winner_id.startswith("0x"):
-            blockchain.payout_winner(tournament_id, winner_id)
-        return runtime
+# 🔥 THE WEB3 PAYOUT TRIGGER 🔥
+        if settings.enable_onchain_payout and winner_id:
+            wallet_to_pay = winner_id
+            
+            # 1. Fetch the winner's actual MetaMask wallet address from the database
+            db_payout = SessionLocal()
+            try:
+                winner_record = db_payout.query(models.PlayerDB).filter(models.PlayerDB.id == winner_id).first()
+                if winner_record and getattr(winner_record, 'wallet_address', None):
+                    wallet_to_pay = winner_record.wallet_address
+            finally:
+                db_payout.close()
 
+            # 2. If they have a connected MetaMask, tell the Smart Contract to pay them!
+            if wallet_to_pay and wallet_to_pay.startswith("0x"):
+                blockchain.execute_onchain_payout(tournament_id, wallet_to_pay)
+                
+        return runtime
+        
     def mark_connected(self, tournament_id: str, player_id: str):
         runtime = self.get_or_create_runtime(tournament_id)
         runtime.player_disconnects.pop(player_id, None)
