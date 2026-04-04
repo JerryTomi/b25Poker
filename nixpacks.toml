@@ -1,17 +1,26 @@
 [phases.setup]
-nixPkgs = ["python312", "python312Packages.pip", "nodejs_20"]
+# Use python311 to ensure maximum compatibility with pre-built wheels for web3 and psycopg2
+# Include gcc so any C-extensions can compile successfully
+nixPkgs = ["python311", "gcc", "nodejs_20"]
 
 [phases.install]
 cmds = [
-  "python3 -m pip install --upgrade pip",
-  "python3 -m pip install -r backend/requirements.txt",
-  "cd poker-platform && npm install"
+  # Create a virtual environment
+  "python -m venv /opt/venv",
+  
+  # Activate the venv and install Python dependencies
+  ". /opt/venv/bin/activate && pip install -r backend/requirements.txt",
+  
+  # Install Node dependencies
+  "npm install --prefix poker-platform"
 ]
 
 [phases.build]
 cmds = [
-  "cd poker-platform && npm run build"
+  # Build the frontend
+  "npm run build --prefix poker-platform"
 ]
 
 [start]
-cmd = "cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT"
+# Activate the venv before starting the server
+cmd = ". /opt/venv/bin/activate && cd backend && python -m uvicorn main:app --host 0.0.0.0 --port $PORT"
