@@ -18,6 +18,15 @@ from config import settings, validate_settings
 from database import SessionLocal, engine
 from tournament_manager import TournamentManager
 
+from fastapi import FastAPI
+
+app = FastAPI()
+
+# Add this new route!
+@app.get("/healthz")
+async def health_check():
+    return {"status": "healthy"}
+
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("poker.api")
 
