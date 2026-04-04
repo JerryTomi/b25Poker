@@ -1,0 +1,5 @@
+poker-platform/node_modules
+backend/casino.db
+**/__pycache__
+**/*.pyc
+.git
