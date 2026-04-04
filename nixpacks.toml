@@ -1,9 +1,10 @@
 [phases.setup]
-nixPkgs = ["python311", "nodejs_20", "npm-9_x"]
+nixPkgs = ["python312", "python312Packages.pip", "nodejs_20"]
 
 [phases.install]
 cmds = [
-  "pip install -r backend/requirements.txt",
+  "python3 -m pip install --upgrade pip",
+  "python3 -m pip install -r backend/requirements.txt",
   "cd poker-platform && npm install"
 ]
 
@@ -13,4 +14,4 @@ cmds = [
 ]
 
 [start]
-cmd = "cd backend && uvicorn main:app --host 0.0.0.0 --port $PORT"
+cmd = "cd backend && python3 -m uvicorn main:app --host 0.0.0.0 --port $PORT"
