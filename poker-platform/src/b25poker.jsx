@@ -18,10 +18,15 @@ const ESCROW_ABI = [
 ];
 
 // ─── API CONSTANTS ───────────────────────────────────────────────────────────
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
-const WS_BASE_URL =
-  import.meta.env.VITE_WS_URL ||
-  `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+const WS_BASE_URL = (() => {
+  const explicitWsUrl = (import.meta.env.VITE_WS_URL || "").replace(/\/$/, "");
+  if (explicitWsUrl) return explicitWsUrl;
+  if (API_BASE_URL) {
+    return API_BASE_URL.replace(/^https:/i, "wss:").replace(/^http:/i, "ws:");
+  }
+  return `${window.location.protocol === "https:" ? "wss:" : "ws:"}//${window.location.host}`;
+})();
 const ENABLE_WALLET_CONNECT = import.meta.env.VITE_ENABLE_WALLET_CONNECT !== "false";
 const SESSION_KEY = "royal_flush_demo_session";
 const CURRENCY = { symbol: "S", color: "#c9a84c" };
@@ -29,6 +34,23 @@ const SUIT_SYMBOLS = { S: "♠", H: "♥", D: "♦", C: "♣" };
 
 function apiUrl(path) {
   return `${API_BASE_URL}${path}`;
+}
+
+async function getResponseError(response, fallbackMessage) {
+  try {
+    const contentType = response.headers.get("content-type") || "";
+    if (contentType.includes("application/json")) {
+      const data = await response.json();
+      if (typeof data?.detail === "string" && data.detail.trim()) return data.detail;
+      if (typeof data?.message === "string" && data.message.trim()) return data.message;
+    } else {
+      const text = await response.text();
+      if (text.trim()) return text.trim();
+    }
+  } catch {
+    // Fall through to the default error message.
+  }
+  return fallbackMessage;
 }
 
 function loadStoredSession() {
@@ -223,7 +245,9 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
         method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ reconnect_token: session?.reconnect_token, display_name: displayName || "Guest", wallet_address: walletAddress }),
       });
-      if (!response.ok) throw new Error("Could not create your demo seat.");
+      if (!response.ok) {
+        throw new Error(await getResponseError(response, "Could not create your demo seat."));
+      }
       const data = await response.json();
       onSession(data);
       setBanner("Demo profile ready. Pick a sit-and-go table below.");
@@ -292,7 +316,7 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
         body: JSON.stringify({ player_id: activeSession.player_id, reconnect_token: activeSession.reconnect_token }),
       });
       const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Could not join this table.");
+      if (!response.ok) throw new Error(data.detail || data.message || "Could not join this table.");
       await fetchTournaments();
       onStart({ ...tournament, seat_index: data.seat_index });
     } catch (err) {
