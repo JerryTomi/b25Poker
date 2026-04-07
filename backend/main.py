@@ -309,15 +309,3 @@ async def websocket_endpoint(websocket: WebSocket, tournament_id: str, player_id
         log_event("player_disconnected", tournament_id=tournament_id, player_id=player_id)
 
 
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-if os.path.isdir(STATIC_DIR):
-    assets_dir = os.path.join(STATIC_DIR, "assets")
-    if os.path.isdir(assets_dir):
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="static-assets")
-
-    @app.get("/{full_path:path}")
-    async def serve_spa(full_path: str):
-        file_path = os.path.join(STATIC_DIR, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
-        return FileResponse(os.path.join(STATIC_DIR, "index.html"))
