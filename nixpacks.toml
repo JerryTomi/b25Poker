@@ -12,7 +12,7 @@ cmds = [
   ". /opt/venv/bin/activate && pip install -r backend/requirements.txt",
   
   # Install Node dependencies
-  "npm install --prefix poker-platform"
+  "npm install --include=dev --prefix poker-platform"
 ]
 
 [phases.build]
