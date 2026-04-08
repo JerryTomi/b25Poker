@@ -567,6 +567,7 @@ function GameScreen({ tournament, session, walletAddress, onLeave }) {
     socket.onmessage = (event) => {
       const message = JSON.parse(event.data);
       if (message.type === "table_state") {
+        setError("");
         setLiveGame(message.data);
         setStatus(message.data.tournament_state === "running" ? "Tournament running" : "Waiting for table");
         setBetInput((previous) => Math.max(previous || message.data.big_blind || 40, message.data.big_blind || 40));
