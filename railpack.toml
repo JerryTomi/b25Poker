@@ -1,6 +1,0 @@
-[build]
-cmds = [
-  "npm install --prefix poker-platform",
-  "npm run build --prefix poker-platform",
-  "pip install -r backend/requirements.txt"
-]
