@@ -1,4 +1,4 @@
-import random
+import secrets
 import time
 from typing import Dict, List, Optional
 
@@ -26,6 +26,7 @@ class PokerEngine:
         self.small_blind = small_blind
         self.big_blind = big_blind
         self.highest_bet = 0
+        self.min_raise = 0
         self.hand_over = True
         self.result = None
         self.hand_number = 0
@@ -55,6 +56,7 @@ class PokerEngine:
             "stack": buy_in,
             "hole_cards": [],
             "bet": 0,
+            "invested": 0,
             "active": False,
             "folded": False,
             "has_acted": False,
@@ -80,7 +82,7 @@ class PokerEngine:
 
     def _build_deck(self):
         self.deck = [{"suit": suit, "rank": rank, "val": RANK_VAL[rank]} for suit in SUITS for rank in RANKS]
-        random.shuffle(self.deck)
+        secrets.SystemRandom().shuffle(self.deck)
 
     def _get_next_occupied_seat(self, start_idx: int) -> int:
         for offset in range(1, self.max_seats + 1):
@@ -116,6 +118,10 @@ class PokerEngine:
             self.hand_over = True
             return False
 
+        if self.hand_number > 0 and self.hand_number % 10 == 0:
+            self.small_blind *= 2
+            self.big_blind *= 2
+
         self.hand_number += 1
         self._build_deck()
         self.community_cards = []
@@ -127,6 +133,7 @@ class PokerEngine:
 
         for pid, pdata in self.players.items():
             pdata["bet"] = 0
+            pdata["invested"] = 0
             pdata["has_acted"] = False
             pdata["folded"] = pdata["eliminated"] or pdata["stack"] <= 0
             pdata["active"] = not pdata["eliminated"] and pdata["stack"] > 0
@@ -148,6 +155,7 @@ class PokerEngine:
         self.players[bb_pid]["last_action"] = "big_blind"
 
         self.highest_bet = bb_amt
+        self.min_raise = self.big_blind
         self.current_turn = self._get_next_active_player(bb_pid)
         self.current_turn_started_at = time.time()
         return self.current_turn is not None
@@ -174,14 +182,21 @@ class PokerEngine:
         elif action in {"bet", "raise", "allin"}:
             wager = pdata["stack"] if action == "allin" else max(0, min(amount, pdata["stack"]))
             total_bet = pdata["bet"] + wager
-            if action != "allin" and total_bet <= self.highest_bet:
+            
+            if action != "allin" and total_bet < self.highest_bet + self.min_raise:
                 return False
+                
             pdata["stack"] -= wager
             pdata["bet"] += wager
-            self.highest_bet = max(self.highest_bet, pdata["bet"])
-            for other_id, other_data in self.players.items():
-                if other_id != player_id and other_data["active"] and not other_data["folded"] and not other_data["eliminated"]:
-                    other_data["has_acted"] = False
+            
+            if pdata["bet"] > self.highest_bet:
+                raise_amount = pdata["bet"] - self.highest_bet
+                if raise_amount >= self.min_raise or action == "allin":
+                    self.min_raise = raise_amount
+                    for other_id, other_data in self.players.items():
+                        if other_id != player_id and other_data["active"] and not other_data["folded"] and not other_data["eliminated"]:
+                            other_data["has_acted"] = False
+                self.highest_bet = pdata["bet"]
         else:
             return False
 
@@ -216,9 +231,11 @@ class PokerEngine:
         if round_over:
             for pdata in self.players.values():
                 self.pot += pdata["bet"]
+                pdata["invested"] += pdata["bet"]
                 pdata["bet"] = 0
                 pdata["has_acted"] = False
             self.highest_bet = 0
+            self.min_raise = self.big_blind
             self.advance_phase()
             if not self.hand_over:
                 dealer_pid = self.seats[self.dealer_idx]
@@ -244,50 +261,89 @@ class PokerEngine:
 
     def _evaluate_showdown(self):
         contenders = [pid for pid, pdata in self.players.items() if pdata["active"] and not pdata["folded"] and not pdata["eliminated"]]
-        best_rank = -1
-        winners: List[str] = []
         best_hands: Dict[str, Dict] = {}
-
         for pid in contenders:
-            hand = best_hand(self.players[pid]["hole_cards"], self.community_cards)
-            best_hands[pid] = hand
-            if not winners or hand["rank"] > best_rank:
-                winners = [pid]
-                best_rank = hand["rank"]
-                continue
-            if hand["rank"] == best_rank:
-                comparison = compare_tiebreaks(hand["tiebreak"], best_hands[winners[0]]["tiebreak"])
-                if comparison > 0:
-                    winners = [pid]
-                elif comparison == 0:
-                    winners.append(pid)
+            best_hands[pid] = best_hand(self.players[pid]["hole_cards"], self.community_cards)
 
-        self._award_pot(winners, "showdown", best_hands)
+        self._award_pot(contenders, "showdown", best_hands)
 
-    def _award_pot(self, winners: List[str], reason: str, hands: Optional[Dict] = None):
+    def _award_pot(self, contenders: List[str], reason: str, hands: Optional[Dict] = None):
         self.hand_over = True
         self.current_turn = None
         self.phase = "showdown" if reason == "showdown" else self.phase
 
         for pdata in self.players.values():
             self.pot += pdata["bet"]
+            pdata["invested"] += pdata["bet"]
             pdata["bet"] = 0
 
-        split_amt = self.pot // len(winners)
-        remainder = self.pot % len(winners)
-        for index, winner_id in enumerate(winners):
-            self.players[winner_id]["stack"] += split_amt + (remainder if index == 0 else 0)
+        payouts = {pid: 0 for pid in self.players.keys()}
+
+        if reason == "showdown" and hands:
+            contenders.sort(
+                key=lambda pid: (hands[pid]["rank"], hands[pid]["tiebreak"]),
+                reverse=True
+            )
+
+        while sum(p["invested"] for p in self.players.values()) > 0 and contenders:
+            best_pid = contenders[0]
+            tied_group = [best_pid]
+            if reason == "showdown" and hands:
+                for pid in contenders[1:]:
+                    if hands[pid]["rank"] == hands[best_pid]["rank"] and hands[pid]["tiebreak"] == hands[best_pid]["tiebreak"]:
+                        tied_group.append(pid)
+
+            active_winners = tied_group.copy()
+            while active_winners and sum(p["invested"] for p in self.players.values()) > 0:
+                cap = min(self.players[pid]["invested"] for pid in active_winners)
+                if cap <= 0:
+                    active_winners = [pid for pid in active_winners if self.players[pid]["invested"] > 0]
+                    continue
+                
+                sub_pot = 0
+                for pdata in self.players.values():
+                    contribution = min(pdata["invested"], cap)
+                    sub_pot += contribution
+                    pdata["invested"] -= contribution
+                    
+                split_amt = sub_pot // len(active_winners)
+                remainder = sub_pot % len(active_winners)
+                
+                ordered_seats = []
+                for offset in range(1, self.max_seats + 1):
+                    idx = (self.dealer_idx + offset) % self.max_seats
+                    if self.seats[idx]:
+                        ordered_seats.append(self.seats[idx])
+                
+                active_winners.sort(key=lambda pid: ordered_seats.index(pid))
+                
+                for i, winner_id in enumerate(active_winners):
+                    payouts[winner_id] += split_amt + (remainder if i == 0 else 0)
+
+                active_winners = [pid for pid in active_winners if self.players[pid]["invested"] > 0]
+
+            contenders = [pid for pid in contenders if pid not in tied_group]
+
+        for pid, amt in payouts.items():
+            if amt > 0:
+                self.players[pid]["stack"] += amt
 
         for pid, pdata in self.players.items():
             if pdata["stack"] <= 0:
                 pdata["eliminated"] = True
                 pdata["active"] = False
 
+        actual_winners = [pid for pid, amt in payouts.items() if amt > 0]
+        actual_winners.sort(key=lambda pid: payouts[pid], reverse=True)
+        max_amt = payouts[actual_winners[0]] if actual_winners else 0
+
+        self.pot = sum(payouts.values())
+
         self.result = {
-            "winners": winners,
+            "winners": actual_winners,
             "reason": reason,
             "hands": hands or {},
-            "amount": split_amt,
+            "amount": max_amt,
             "hand_number": self.hand_number,
         }
 

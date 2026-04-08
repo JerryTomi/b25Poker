@@ -7,10 +7,9 @@ import uuid
 from contextlib import asynccontextmanager
 from typing import Dict, List, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 import models
@@ -38,6 +37,14 @@ def log_event(message: str, **fields):
     logger.info("%s %s", message, json.dumps(fields, default=str))
 
 
+class CreateTournamentRequest(BaseModel):
+    title: str
+    desc: str
+    buy_in_chips: int
+    required_nft: Optional[str] = None
+    admin_secret: str
+
+
 class DemoSessionRequest(BaseModel):
     display_name: Optional[str] = None
     reconnect_token: Optional[str] = None
@@ -59,8 +66,20 @@ class ConnectionManager:
         self.active_connections: Dict[str, List[dict]] = {}
 
     async def connect(self, websocket: WebSocket, tournament_id: str, player_id: str):
+        # Anti-collusion IP tracking (blocks multiple accounts accessing the same table from identical IPs)
+        forwarded = websocket.headers.get("x-forwarded-for")
+        client_ip = forwarded.split(",")[0] if forwarded else (websocket.client.host if websocket.client else "unknown")
+        
+        for conn in self.active_connections.get(tournament_id, []):
+            if conn.get("ip") == client_ip and conn["player_id"] != player_id and client_ip not in ("unknown", "127.0.0.1", "localhost", "::1"):
+                await websocket.accept()
+                await self.send_event(websocket, "error", {"message": "Anti-collusion: Multiple accounts from identical IPs are blocked."})
+                await websocket.close(code=1008)
+                return False
+
         await websocket.accept()
-        self.active_connections.setdefault(tournament_id, []).append({"ws": websocket, "player_id": player_id})
+        self.active_connections.setdefault(tournament_id, []).append({"ws": websocket, "player_id": player_id, "ip": client_ip})
+        return True
 
     def disconnect(self, websocket: WebSocket, tournament_id: str):
         if tournament_id in self.active_connections:
@@ -193,6 +212,48 @@ async def list_tournaments():
     return {"items": tournament_manager.list_tournaments()}
 
 
+@app.post("/api/tournaments")
+async def create_tournament_endpoint(payload: CreateTournamentRequest):
+    if payload.admin_secret != os.getenv("ADMIN_SECRET", "supersecret"):
+        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    
+    import blockchain
+    import datetime
+    
+    new_id = f"custom-sng-{uuid.uuid4().hex[:6]}"
+    
+    db = SessionLocal()
+    try:
+        if settings.enable_onchain_payout:
+            success = blockchain.create_tournament(
+                table_id=new_id,
+                title=payload.title,
+                desc=payload.desc,
+                buy_in_usdc=payload.buy_in_chips,
+                required_nft=payload.required_nft
+            )
+            if not success:
+                raise HTTPException(status_code=500, detail="Blockchain transaction failed. Check Server balance/RPC.")
+
+        new_tournament = models.TournamentDB(
+            id=new_id,
+            title=payload.title,
+            mode="tournament_sng",
+            state="registering",
+            buy_in_chips=payload.buy_in_chips,
+            max_seats=settings.max_seats,
+            min_players=settings.min_players_to_start,
+            required_nft=payload.required_nft,
+            created_at=datetime.datetime.utcnow(),
+            updated_at=datetime.datetime.utcnow()
+        )
+        db.add(new_tournament)
+        db.commit()
+        return {"ok": True, "tournament_id": new_id, "title": payload.title}
+    finally:
+        db.close()
+
+
 @app.post("/api/tournaments/{tournament_id}/join")
 async def join_tournament(tournament_id: str, payload: JoinTournamentRequest):
     db = SessionLocal()
@@ -269,7 +330,10 @@ async def websocket_endpoint(websocket: WebSocket, tournament_id: str, player_id
         await websocket.close(code=1008)
         return
 
-    await manager.connect(websocket, tournament_id, player_id)
+    success = await manager.connect(websocket, tournament_id, player_id)
+    if not success:
+        return
+        
     tournament_manager.mark_connected(tournament_id, player_id)
     await manager.send_event(websocket, "table_joined", {"player_id": player_id, "tournament_id": tournament_id})
     await manager.broadcast_table_state(runtime)

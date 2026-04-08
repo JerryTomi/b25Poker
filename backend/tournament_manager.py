@@ -357,7 +357,7 @@ class TournamentManager:
 
             # 2. If they have a connected MetaMask, tell the Smart Contract to pay them!
             if wallet_to_pay and wallet_to_pay.startswith("0x"):
-                blockchain.execute_onchain_payout(tournament_id, wallet_to_pay)
+                blockchain.payout_winner(tournament_id, wallet_to_pay)
                 
         return runtime
         
