@@ -24,14 +24,6 @@ from tournament_manager import TournamentManager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("poker.api")
 
-try:
-    with engine.connect() as conn:
-        conn.execute(text("SELECT reconnect_token FROM players LIMIT 1"))
-        conn.execute(text("SELECT desc, category, asset_symbol, blind_schedule_json FROM tournaments LIMIT 1"))
-except (OperationalError, ProgrammingError):
-    logger.warning("Database schema mismatch detected. Dropping old tables to recreate...")
-    models.Base.metadata.drop_all(bind=engine)
-
 models.Base.metadata.create_all(bind=engine)
 tournament_manager = TournamentManager()
 
