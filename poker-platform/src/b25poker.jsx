@@ -180,6 +180,7 @@ function buyInLabel(game) {
 function statusLabel(game) {
   if (game.state === "running") return "Live";
   if (game.state === "countdown") return "Starting";
+  if (game.state === "scheduled") return "Scheduled";
   if (game.state === "finished") return "Finished";
   return "Open";
 }
@@ -193,6 +194,93 @@ function LobbySection({ title, copy, children }) {
       </div>
       {children}
     </div>
+  );
+}
+
+function defaultCreatorForm() {
+  const now = new Date();
+  const start = new Date(now.getTime() + 60 * 60 * 1000);
+  const lateReg = new Date(start.getTime() + 20 * 60 * 1000);
+  return {
+    title: "",
+    desc: "",
+    adminSecret: "",
+    assetSymbol: "S",
+    buyIn: 1000,
+    startingStack: 3000,
+    minPlayers: 2,
+    maxSeats: 6,
+    blindLevelDurationSec: 300,
+    requiredNft: "",
+    scheduledStartAt: start.toISOString().slice(0, 16),
+    lateRegistrationEndsAt: lateReg.toISOString().slice(0, 16),
+    isRecurring: false,
+    recurrenceRule: "WEEKLY",
+  };
+}
+
+function CreatorTabButton({ active, children, onClick, disabled = false }) {
+  return (
+    <button
+      onClick={onClick}
+      disabled={disabled}
+      style={{
+        flex: 1,
+        padding: "12px 10px",
+        borderRadius: 12,
+        border: active ? "1px solid rgba(16,185,129,0.45)" : "1px solid rgba(255,255,255,0.08)",
+        background: active ? "rgba(16,185,129,0.12)" : "rgba(255,255,255,0.04)",
+        color: active ? "#10b981" : "rgba(255,255,255,0.72)",
+        fontSize: 13,
+        fontWeight: 800,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.45 : 1,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function FieldLabel({ children }) {
+  return <div style={{ fontSize: 12, fontWeight: 700, color: "rgba(255,255,255,0.62)", marginBottom: 8 }}>{children}</div>;
+}
+
+function CreatorInput(props) {
+  return (
+    <input
+      {...props}
+      style={{
+        width: "100%",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "rgba(255,255,255,0.04)",
+        color: "#fff",
+        padding: "12px 14px",
+        outline: "none",
+        boxSizing: "border-box",
+        ...(props.style || {}),
+      }}
+    />
+  );
+}
+
+function CreatorSelect(props) {
+  return (
+    <select
+      {...props}
+      style={{
+        width: "100%",
+        borderRadius: 12,
+        border: "1px solid rgba(255,255,255,0.08)",
+        background: "#171424",
+        color: "#fff",
+        padding: "12px 14px",
+        outline: "none",
+        boxSizing: "border-box",
+        ...(props.style || {}),
+      }}
+    />
   );
 }
 
@@ -287,11 +375,15 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
   const [displayName, setDisplayName] = useState(session?.display_name || "");
   const [tournaments, setTournaments] = useState([]);
   const [web3Tournaments, setWeb3Tournaments] = useState([]);
+  const [assets, setAssets] = useState([]);
   const [contractStatus, setContractStatus] = useState("loading"); // "loading" | "ok" | "error"
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [banner, setBanner] = useState("");
+  const [creatorOpen, setCreatorOpen] = useState(false);
+  const [creatorTab, setCreatorTab] = useState("sng");
+  const [creatorForm, setCreatorForm] = useState(() => defaultCreatorForm());
 
   const fetchTournaments = async () => {
     // 1. Fetch backend-managed games.
@@ -303,6 +395,16 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
       }
     } catch (err) {
       console.warn("Could not load API tournaments:", err);
+    }
+
+    try {
+      const response = await fetch(apiUrl("/api/assets"));
+      if (response.ok) {
+        const data = await response.json();
+        setAssets(data.items || []);
+      }
+    } catch (err) {
+      console.warn("Could not load assets:", err);
     }
 
     // 2. Fetch NFT-gated on-chain tournaments.
@@ -461,6 +563,89 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
     }
   };
 
+  const updateCreatorForm = (patch) => {
+    setCreatorForm((current) => ({ ...current, ...patch }));
+  };
+
+  const buildBlindSchedule = () => {
+    if (creatorTab === "tournament") {
+      return [
+        { small_blind: 25, big_blind: 50 },
+        { small_blind: 50, big_blind: 100 },
+        { small_blind: 75, big_blind: 150 },
+        { small_blind: 100, big_blind: 200 },
+        { small_blind: 150, big_blind: 300 },
+        { small_blind: 200, big_blind: 400 },
+      ];
+    }
+    return [
+      { small_blind: 20, big_blind: 40 },
+      { small_blind: 30, big_blind: 60 },
+      { small_blind: 40, big_blind: 80 },
+      { small_blind: 60, big_blind: 120 },
+    ];
+  };
+
+  const handleCreateTable = async () => {
+    const activeSession = session || (await createOrResumeSession());
+    if (!activeSession) return;
+
+    if (creatorTab === "ring") {
+      setError("Ring-game creation UI is staged, but the revolving table backend still needs to be promoted into this API.");
+      return;
+    }
+
+    setSubmitting(true);
+    setError("");
+    setBanner("");
+    try {
+      const registrationOpen = new Date();
+      const scheduledStart = creatorTab === "tournament" ? new Date(creatorForm.scheduledStartAt) : null;
+      const lateRegEnd = creatorTab === "tournament" && creatorForm.lateRegistrationEndsAt ? new Date(creatorForm.lateRegistrationEndsAt) : null;
+      const payload = {
+        title: creatorForm.title || (creatorTab === "tournament" ? "Scheduled Tournament" : "Sit & Go"),
+        desc: creatorForm.desc,
+        buy_in_chips: Number(creatorForm.buyIn),
+        starting_stack: Number(creatorForm.startingStack),
+        category: "tournament",
+        mode: creatorTab === "tournament" ? "tournament_scheduled" : "tournament_sng",
+        min_players: Number(creatorForm.minPlayers),
+        max_seats: Number(creatorForm.maxSeats),
+        blind_level_duration_sec: Number(creatorForm.blindLevelDurationSec),
+        blind_schedule: buildBlindSchedule(),
+        asset_symbol: creatorForm.assetSymbol,
+        required_nft: creatorForm.requiredNft || null,
+        creator_player_id: activeSession.player_id,
+        creator_wallet_address: walletAddress || null,
+        creator_nft_contract: creatorForm.requiredNft || null,
+        registration_opens_at: registrationOpen.toISOString(),
+        scheduled_start_at: scheduledStart ? scheduledStart.toISOString() : null,
+        late_registration_ends_at: lateRegEnd ? lateRegEnd.toISOString() : null,
+        is_recurring: creatorTab === "tournament" ? creatorForm.isRecurring : false,
+        recurrence_rule: creatorTab === "tournament" && creatorForm.isRecurring ? creatorForm.recurrenceRule : null,
+        admin_secret: creatorForm.adminSecret,
+      };
+
+      const response = await fetch(apiUrl("/api/tournaments"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || "Could not create this table.");
+      }
+      setBanner(`${data.title} created. It is now available in the lobby.`);
+      setCreatorOpen(false);
+      setCreatorForm(defaultCreatorForm());
+      await fetchTournaments();
+    } catch (err) {
+      setError(err.message || "Creation failed.");
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   const allTournaments = [...web3Tournaments, ...tournaments];
   const gamesBySection = {
     cash: allTournaments.filter((game) => gameSectionKey(game) === "cash"),
@@ -509,6 +694,9 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
               </button>
             )
           ) : null}
+          <button onClick={() => setCreatorOpen(true)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 999, padding: "10px 18px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
+            Create Table
+          </button>
         </div>
       </header>
 
@@ -651,6 +839,128 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
           Base Sepolia Testnet · Play responsibly
         </div>
       </footer>
+
+      {creatorOpen ? (
+        <Modal>
+          <div style={{ width: "min(680px, 100%)", borderRadius: 24, background: "linear-gradient(160deg, #121020 0%, #0c0b18 100%)", border: "1px solid rgba(255,255,255,0.08)", boxShadow: "0 28px 80px rgba(0,0,0,0.55)", padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+              <div>
+                <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "rgba(201,168,76,0.55)", fontWeight: 700 }}>Create New Table</div>
+                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900, color: "#fff", marginTop: 6 }}>NLH Creator</div>
+              </div>
+              <button onClick={() => setCreatorOpen(false)} style={{ ...secondaryButtonStyle, padding: "8px 14px" }}>Close</button>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+              <CreatorTabButton active={creatorTab === "ring"} onClick={() => setCreatorTab("ring")}>Ring Game</CreatorTabButton>
+              <CreatorTabButton active={creatorTab === "sng"} onClick={() => setCreatorTab("sng")}>SNG</CreatorTabButton>
+              <CreatorTabButton active={creatorTab === "tournament"} onClick={() => setCreatorTab("tournament")}>Tournament</CreatorTabButton>
+            </div>
+
+            <div style={{ borderRadius: 18, border: "1px solid rgba(255,255,255,0.07)", background: "rgba(255,255,255,0.03)", padding: 18 }}>
+              {creatorTab === "ring" ? (
+                <div>
+                  <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 800, marginBottom: 10 }}>Ring Game</div>
+                  <p style={{ margin: 0, color: "rgba(255,255,255,0.5)", lineHeight: 1.7 }}>
+                    This tab matches the cash-game direction you want, but the current create endpoint is still tournament-first.
+                    Once the revolving table backend is promoted into the shared API, this tab can create true drop-in tables.
+                  </p>
+                </div>
+              ) : (
+                <>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+                    <div>
+                      <FieldLabel>Table Title</FieldLabel>
+                      <CreatorInput value={creatorForm.title} onChange={(e) => updateCreatorForm({ title: e.target.value })} placeholder={creatorTab === "tournament" ? "Friday Builder Cup" : "Fast Sit & Go"} />
+                    </div>
+                    <div>
+                      <FieldLabel>Chip Asset</FieldLabel>
+                      <CreatorSelect value={creatorForm.assetSymbol} onChange={(e) => updateCreatorForm({ assetSymbol: e.target.value })}>
+                        {(assets.length ? assets : [{ symbol: "S" }, { symbol: "USDC" }]).map((asset) => (
+                          <option key={asset.symbol} value={asset.symbol}>{asset.symbol}</option>
+                        ))}
+                      </CreatorSelect>
+                    </div>
+                  </div>
+
+                  <div style={{ marginBottom: 14 }}>
+                    <FieldLabel>Description</FieldLabel>
+                    <CreatorInput value={creatorForm.desc} onChange={(e) => updateCreatorForm({ desc: e.target.value })} placeholder="Describe the event, sponsor, or table style" />
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 14, marginBottom: 14 }}>
+                    <div>
+                      <FieldLabel>Buy-In</FieldLabel>
+                      <CreatorInput type="number" value={creatorForm.buyIn} onChange={(e) => updateCreatorForm({ buyIn: e.target.value })} />
+                    </div>
+                    <div>
+                      <FieldLabel>Start Stack</FieldLabel>
+                      <CreatorInput type="number" value={creatorForm.startingStack} onChange={(e) => updateCreatorForm({ startingStack: e.target.value })} />
+                    </div>
+                    <div>
+                      <FieldLabel>Auto Start</FieldLabel>
+                      <CreatorInput type="number" min="2" value={creatorForm.minPlayers} onChange={(e) => updateCreatorForm({ minPlayers: e.target.value })} />
+                    </div>
+                    <div>
+                      <FieldLabel>Seats</FieldLabel>
+                      <CreatorInput type="number" min="2" max="9" value={creatorForm.maxSeats} onChange={(e) => updateCreatorForm({ maxSeats: e.target.value })} />
+                    </div>
+                  </div>
+
+                  <div style={{ display: "grid", gridTemplateColumns: creatorTab === "tournament" ? "repeat(3, 1fr)" : "repeat(2, 1fr)", gap: 14, marginBottom: 14 }}>
+                    <div>
+                      <FieldLabel>Blind Level Seconds</FieldLabel>
+                      <CreatorInput type="number" min="60" step="60" value={creatorForm.blindLevelDurationSec} onChange={(e) => updateCreatorForm({ blindLevelDurationSec: e.target.value })} />
+                    </div>
+                    <div>
+                      <FieldLabel>Required NFT</FieldLabel>
+                      <CreatorInput value={creatorForm.requiredNft} onChange={(e) => updateCreatorForm({ requiredNft: e.target.value })} placeholder="Optional contract address" />
+                    </div>
+                    {creatorTab === "tournament" ? (
+                      <div>
+                        <FieldLabel>Recurring</FieldLabel>
+                        <CreatorSelect value={creatorForm.isRecurring ? creatorForm.recurrenceRule : "NONE"} onChange={(e) => updateCreatorForm({ isRecurring: e.target.value !== "NONE", recurrenceRule: e.target.value === "NONE" ? "WEEKLY" : e.target.value })}>
+                          <option value="NONE">One Time</option>
+                          <option value="WEEKLY">Weekly</option>
+                        </CreatorSelect>
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {creatorTab === "tournament" ? (
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 14 }}>
+                      <div>
+                        <FieldLabel>Scheduled Start</FieldLabel>
+                        <CreatorInput type="datetime-local" value={creatorForm.scheduledStartAt} onChange={(e) => updateCreatorForm({ scheduledStartAt: e.target.value })} />
+                      </div>
+                      <div>
+                        <FieldLabel>Late Reg Ends</FieldLabel>
+                        <CreatorInput type="datetime-local" value={creatorForm.lateRegistrationEndsAt} onChange={(e) => updateCreatorForm({ lateRegistrationEndsAt: e.target.value })} />
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ borderRadius: 14, padding: "12px 14px", background: "rgba(201,168,76,0.06)", border: "1px solid rgba(201,168,76,0.18)", color: "rgba(255,255,255,0.68)", fontSize: 13, lineHeight: 1.6, marginBottom: 14 }}>
+                      Sit & Go creation starts registering immediately and launches as soon as enough players are seated.
+                    </div>
+                  )}
+
+                  <div style={{ marginBottom: 18 }}>
+                    <FieldLabel>Admin Secret</FieldLabel>
+                    <CreatorInput type="password" value={creatorForm.adminSecret} onChange={(e) => updateCreatorForm({ adminSecret: e.target.value })} placeholder="Required by the current backend create endpoint" />
+                  </div>
+
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button onClick={() => setCreatorForm(defaultCreatorForm())} style={{ ...secondaryButtonStyle, flex: 1, padding: "14px 18px", fontWeight: 800 }}>Reset</button>
+                    <button onClick={handleCreateTable} disabled={submitting} style={{ ...primaryButtonStyle, flex: 1, padding: "14px 18px", fontWeight: 800, opacity: submitting ? 0.6 : 1 }}>
+                      {submitting ? "Creating..." : "Create"}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </Modal>
+      ) : null}
 
       <style>{`
         @keyframes goldShimmer {
