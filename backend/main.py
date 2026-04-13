@@ -24,8 +24,11 @@ from tournament_manager import TournamentManager
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 logger = logging.getLogger("poker.api")
 
-models.Base.metadata.create_all(bind=engine)
 tournament_manager = TournamentManager()
+startup_state = {
+    "bootstrap_ok": False,
+    "bootstrap_error": None,
+}
 
 
 def log_event(message: str, **fields):
@@ -132,16 +135,37 @@ def get_player_by_token(db, player_id: str, reconnect_token: str):
     )
 
 
+def probe_database() -> tuple[bool, str | None]:
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     issues = validate_settings()
     for issue in issues:
         logger.warning("Config issue: %s", issue)
-    tournament_manager.ensure_seed_data()
-    tournament_manager.start_background_task()
+    broadcast_task = None
+    startup_state["bootstrap_ok"] = False
+    startup_state["bootstrap_error"] = None
+    try:
+        models.Base.metadata.create_all(bind=engine)
+        tournament_manager.ensure_seed_data()
+        tournament_manager.start_background_task()
+        startup_state["bootstrap_ok"] = True
+    except Exception as exc:
+        startup_state["bootstrap_error"] = str(exc)
+        logger.exception("Application bootstrap failed")
     broadcast_task = asyncio.create_task(periodic_state_broadcast())
     yield
-    broadcast_task.cancel()
+    if broadcast_task:
+        broadcast_task.cancel()
 
 
 app = FastAPI(lifespan=lifespan)
@@ -166,8 +190,14 @@ async def periodic_state_broadcast():
 
 @app.get("/healthz")
 async def healthz():
+    db_ok, db_error = probe_database()
+    status = "ok" if startup_state["bootstrap_ok"] and db_ok else "degraded"
     return {
-        "status": "ok",
+        "status": status,
+        "bootstrap_ok": startup_state["bootstrap_ok"],
+        "bootstrap_error": startup_state["bootstrap_error"],
+        "database_ok": db_ok,
+        "database_error": db_error,
         "demo_mode": settings.demo_mode,
         "wallet_connect": settings.enable_wallet_connect,
         "onchain_payout": settings.enable_onchain_payout,
