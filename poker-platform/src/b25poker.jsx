@@ -80,6 +80,122 @@ function formatWsUrl(tournamentId, session) {
   )}&token=${encodeURIComponent(session.reconnect_token)}`;
 }
 
+function normalizeApiGame(game) {
+  return {
+    ...game,
+    category: game.category || (game.mode === "cash" ? "cash" : "tournament"),
+    access: game.access_policy || (game.required_nft ? "nft" : "open"),
+    asset_symbol: game.asset_symbol || CURRENCY.symbol,
+    capacity_label: `${game.seated_count ?? 0}/${game.max_seats ?? 6}`,
+  };
+}
+
+function normalizeWeb3Game(game) {
+  return {
+    ...game,
+    category: "tournament",
+    access: "nft",
+    mode: "tournament_web3",
+    asset_symbol: game.asset_symbol || "USDC",
+    capacity_label: `${game.seated_count ?? 0}/${game.max_seats ?? 6}`,
+  };
+}
+
+function gameSectionKey(game) {
+  if (game.category === "cash") return "cash";
+  if (game.access === "nft") return "featured";
+  return "scheduled";
+}
+
+function gameSectionMeta(sectionKey) {
+  if (sectionKey === "cash") {
+    return {
+      title: "Cash Tables",
+      copy: "Drop in any time, buy chips, and leave with the stack you built.",
+    };
+  }
+  if (sectionKey === "featured") {
+    return {
+      title: "Featured On-Chain Events",
+      copy: "NFT-gated tournaments and partner drops with escrow-backed entry.",
+    };
+  }
+  return {
+    title: "Scheduled Tournaments",
+    copy: "Structured events with fixed seats, countdown starts, and rising blinds.",
+  };
+}
+
+function gameAppearance(game) {
+  if (game.category === "cash") {
+    return {
+      icon: "♠",
+      accent: "#10b981",
+      badgeBg: "rgba(16,185,129,0.15)",
+      badgeColor: "#10b981",
+      badgeLabel: "CASH TABLE",
+    };
+  }
+  if (game.access === "nft") {
+    return {
+      icon: "♛",
+      accent: "#a78bfa",
+      badgeBg: "rgba(124,58,237,0.15)",
+      badgeColor: "#a78bfa",
+      badgeLabel: "NFT EVENT",
+    };
+  }
+  return {
+    icon: "♠",
+    accent: "#c9a84c",
+    badgeBg: "rgba(201,168,76,0.15)",
+    badgeColor: "#c9a84c",
+    badgeLabel: "TOURNAMENT",
+  };
+}
+
+function gameTypeLabel(game) {
+  if (game.category === "cash") return "Open Cash";
+  if (game.mode === "tournament_web3") return "Creator Event";
+  return "Scheduled SNG";
+}
+
+function gameDescription(game) {
+  if (game.desc) return game.desc;
+  if (game.state === "scheduled" && game.scheduled_start_at) {
+    return `Registration opens ahead of a planned start at ${new Date(game.scheduled_start_at).toLocaleString()}.`;
+  }
+  if (game.state === "countdown") return `Starts in ${game.countdown_remaining}s`;
+  if (game.state === "running") return game.category === "cash" ? "Table is live now." : "Tournament is already underway.";
+  if (game.category === "cash") return "Sit down, top up, and leave whenever you like.";
+  if (game.access === "nft") return "Connect your wallet, verify access, and lock in your entry.";
+  return "Register before the countdown ends and play through the blind schedule.";
+}
+
+function buyInLabel(game) {
+  if (game.buy_in_usdc != null) return `Buy-in: ${game.buy_in_usdc} ${game.asset_symbol}`;
+  return `Buy-in: ${game.asset_symbol}${(game.buy_in_chips ?? 1000).toLocaleString()}`;
+}
+
+function statusLabel(game) {
+  if (game.state === "running") return "Live";
+  if (game.state === "countdown") return "Starting";
+  if (game.state === "finished") return "Finished";
+  return "Open";
+}
+
+function LobbySection({ title, copy, children }) {
+  return (
+    <div style={{ marginBottom: 28 }}>
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "rgba(201,168,76,0.5)", fontWeight: 700 }}>{title}</div>
+        <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.45)", fontSize: 14, lineHeight: 1.6 }}>{copy}</p>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 // ─── UI COMPONENTS ───────────────────────────────────────────────────────────
 function Card({ card, hidden = false, small = false, animate = false }) {
   if (!card && !hidden) return null;
@@ -178,23 +294,23 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
   const [banner, setBanner] = useState("");
 
   const fetchTournaments = async () => {
-    // 1. Fetch free open tables from the backend API
+    // 1. Fetch backend-managed games.
     try {
       const response = await fetch(apiUrl("/api/tournaments"));
       if (response.ok) {
         const data = await response.json();
-        setTournaments(data.items || []);
+        setTournaments((data.items || []).map(normalizeApiGame));
       }
     } catch (err) {
       console.warn("Could not load API tournaments:", err);
     }
 
-    // 2. Fetch NFT-gated tournaments from the deployed smart contract
+    // 2. Fetch NFT-gated on-chain tournaments.
     try {
       const provider = new ethers.JsonRpcProvider("https://sepolia.base.org");
       const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, provider);
       const data = await escrowContract.getAllTournaments();
-      const formattedWeb3 = data.map(t => ({
+      const formattedWeb3 = data.map(t => normalizeWeb3Game({
         id: t.id,
         title: t.title,
         desc: t.desc,
@@ -346,12 +462,11 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
   };
 
   const allTournaments = [...web3Tournaments, ...tournaments];
-
-  const tableIcon = (t) => t.isWeb3 ? "♛" : "♠";
-  const tableAccent = (t) => t.isWeb3 ? "#a78bfa" : "#c9a84c";
-  const tableBadgeBg = (t) => t.isWeb3 ? "rgba(124,58,237,0.15)" : "rgba(16,185,129,0.15)";
-  const tableBadgeColor = (t) => t.isWeb3 ? "#a78bfa" : "#10b981";
-  const tableBadgeLabel = (t) => t.isWeb3 ? "NFT GATED" : "OPEN TABLE";
+  const gamesBySection = {
+    cash: allTournaments.filter((game) => gameSectionKey(game) === "cash"),
+    scheduled: allTournaments.filter((game) => gameSectionKey(game) === "scheduled"),
+    featured: allTournaments.filter((game) => gameSectionKey(game) === "featured"),
+  };
 
   return (
     <div style={{ minHeight: "100vh", background: "#08070f", display: "flex", flexDirection: "column", position: "relative", overflow: "hidden", fontFamily: "'Inter', sans-serif", color: "#fff" }}>
@@ -453,13 +568,19 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
 
       {/* ── TOURNAMENT CARDS ── */}
       <section style={{ position: "relative", zIndex: 10, maxWidth: 1140, margin: "0 auto", padding: "0 24px 80px", width: "100%" }}>
+        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
+          {gamesBySection.cash.length ? <span style={pillStyle()}>Cash Tables {gamesBySection.cash.length}</span> : null}
+          {gamesBySection.scheduled.length ? <span style={pillStyle()}>Scheduled Tournaments {gamesBySection.scheduled.length}</span> : null}
+          {gamesBySection.featured.length ? <span style={pillStyle()}>Featured Events {gamesBySection.featured.length}</span> : null}
+        </div>
         {loading && allTournaments.length === 0 ? (
           <div style={{ textAlign: "center", paddingTop: 40 }}><Spinner size={48} /></div>
         ) : (
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
             {allTournaments.map(t => {
-              const isJoinable = t.state === "registering" || t.state === "countdown";
-              const accent = tableAccent(t);
+              const isJoinable = t.state === "scheduled" || t.state === "registering" || t.state === "countdown";
+              const appearance = gameAppearance(t);
+              const accent = appearance.accent;
               return (
                 <div key={t.id} style={{
                   borderRadius: 22, padding: 28,
@@ -475,29 +596,25 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
                 >
                   {/* Badge */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: tableBadgeBg(t), color: tableBadgeColor(t) }}>
-                      {tableBadgeLabel(t)}
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: appearance.badgeBg, color: appearance.badgeColor }}>
+                      {appearance.badgeLabel}
                     </span>
                     <span style={{ fontSize: 12, fontWeight: 700, color: accent, border: `1px solid ${accent}44`, borderRadius: 999, padding: "4px 10px" }}>
-                      {t.seated_count}/{t.max_seats}
+                      {statusLabel(t)}
                     </span>
                   </div>
 
                   {/* Icon + Title */}
-                  <div style={{ fontSize: 36, color: accent, marginBottom: 10, lineHeight: 1 }}>{tableIcon(t)}</div>
+                  <div style={{ fontSize: 36, color: accent, marginBottom: 10, lineHeight: 1 }}>{appearance.icon}</div>
                   <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>{t.title}</div>
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 20, flex: 1 }}>
-                    {t.desc || (t.state === "countdown" ? `Starts in ${t.countdown_remaining}s` : t.state === "running" ? "Tournament is live" : t.isWeb3 ? "Connect wallet & verify NFT to enter." : "Sit down and leave whenever you like.")}
+                    {gameDescription(t)}
                   </div>
 
                   {/* Buy-in row */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, fontSize: 13 }}>
-                    {t.isWeb3 ? (
-                      <span style={{ color: "#a78bfa", fontWeight: 800 }}>Buy-in: {t.buy_in_usdc} USDC</span>
-                    ) : (
-                      <span style={{ color: "#c9a84c", fontWeight: 800 }}>Buy-in: {CURRENCY.symbol}{(t.buy_in_chips ?? 1000).toLocaleString()}</span>
-                    )}
-                    <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>6-Max SNG</span>
+                    <span style={{ color: accent, fontWeight: 800 }}>{buyInLabel(t)}</span>
+                    <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>{gameTypeLabel(t)}</span>
                   </div>
 
                   {/* Join button */}
@@ -515,7 +632,7 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
                       transition: "opacity 0.2s",
                     }}>
                     {isJoinable
-                      ? (t.isWeb3 ? "Connect & Enter" : "Join Table")
+                      ? (t.isWeb3 ? "Connect & Enter" : t.category === "cash" ? "Join Table" : "Register")
                       : (t.state === "running" ? "In Progress" : "Closed")}
                   </button>
                 </div>

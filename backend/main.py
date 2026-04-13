@@ -5,6 +5,7 @@ import os
 import secrets
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Request
@@ -26,6 +27,7 @@ logger = logging.getLogger("poker.api")
 try:
     with engine.connect() as conn:
         conn.execute(text("SELECT reconnect_token FROM players LIMIT 1"))
+        conn.execute(text("SELECT desc, category, asset_symbol, blind_schedule_json FROM tournaments LIMIT 1"))
 except (OperationalError, ProgrammingError):
     logger.warning("Database schema mismatch detected. Dropping old tables to recreate...")
     models.Base.metadata.drop_all(bind=engine)
@@ -40,9 +42,26 @@ def log_event(message: str, **fields):
 
 class CreateTournamentRequest(BaseModel):
     title: str
-    desc: str
+    desc: str = ""
     buy_in_chips: int
+    starting_stack: Optional[int] = None
+    category: str = "tournament"
+    mode: str = "tournament_scheduled"
+    min_players: Optional[int] = None
+    max_seats: Optional[int] = None
+    blind_level_duration_sec: Optional[int] = None
+    blind_schedule: Optional[List[Dict[str, int]]] = None
+    asset_symbol: str = "S"
+    asset_address: Optional[str] = None
+    creator_player_id: Optional[str] = None
+    creator_wallet_address: Optional[str] = None
+    creator_nft_contract: Optional[str] = None
     required_nft: Optional[str] = None
+    registration_opens_at: Optional[str] = None
+    scheduled_start_at: Optional[str] = None
+    late_registration_ends_at: Optional[str] = None
+    is_recurring: bool = False
+    recurrence_rule: Optional[str] = None
     admin_secret: str
 
 
@@ -213,46 +232,75 @@ async def list_tournaments():
     return {"items": tournament_manager.list_tournaments()}
 
 
+@app.get("/api/assets")
+async def list_assets():
+    return {"items": tournament_manager.list_assets()}
+
+
 @app.post("/api/tournaments")
 async def create_tournament_endpoint(payload: CreateTournamentRequest):
     if payload.admin_secret != os.getenv("ADMIN_SECRET", "supersecret"):
         raise HTTPException(status_code=403, detail="Invalid admin secret")
-    
-    import blockchain
-    import datetime
-    
-    new_id = f"custom-sng-{uuid.uuid4().hex[:6]}"
-    
-    db = SessionLocal()
-    try:
-        if settings.enable_onchain_payout:
-            success = blockchain.create_tournament(
-                table_id=new_id,
-                title=payload.title,
-                desc=payload.desc,
-                buy_in_usdc=payload.buy_in_chips,
-                required_nft=payload.required_nft
-            )
-            if not success:
-                raise HTTPException(status_code=500, detail="Blockchain transaction failed. Check Server balance/RPC.")
 
-        new_tournament = models.TournamentDB(
-            id=new_id,
-            title=payload.title,
-            mode="tournament_sng",
-            state="registering",
-            buy_in_chips=payload.buy_in_chips,
-            max_seats=settings.max_seats,
-            min_players=settings.min_players_to_start,
-            required_nft=payload.required_nft,
-            created_at=datetime.datetime.utcnow(),
-            updated_at=datetime.datetime.utcnow()
+    new_id = f"custom-sng-{uuid.uuid4().hex[:6]}"
+    try:
+        registration_opens_at = datetime.fromisoformat(payload.registration_opens_at) if payload.registration_opens_at else None
+        scheduled_start_at = datetime.fromisoformat(payload.scheduled_start_at) if payload.scheduled_start_at else None
+        late_registration_ends_at = (
+            datetime.fromisoformat(payload.late_registration_ends_at) if payload.late_registration_ends_at else None
         )
-        db.add(new_tournament)
-        db.commit()
-        return {"ok": True, "tournament_id": new_id, "title": payload.title}
-    finally:
-        db.close()
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid datetime format: {exc}")
+
+    try:
+        new_tournament = tournament_manager.create_tournament(
+            {
+                "id": new_id,
+                "title": payload.title,
+                "desc": payload.desc,
+                "category": payload.category,
+                "mode": payload.mode,
+                "state": "scheduled" if scheduled_start_at and registration_opens_at and registration_opens_at > datetime.utcnow() else "registering",
+                "buy_in_chips": payload.buy_in_chips,
+                "starting_stack": payload.starting_stack or payload.buy_in_chips,
+                "min_players": payload.min_players or settings.min_players_to_start,
+                "max_seats": payload.max_seats or settings.max_seats,
+                "blind_level_duration_sec": payload.blind_level_duration_sec or 300,
+                "blind_schedule": payload.blind_schedule,
+                "asset_symbol": payload.asset_symbol,
+                "required_nft": payload.required_nft,
+                "creator_player_id": payload.creator_player_id,
+                "creator_wallet_address": payload.creator_wallet_address.lower() if payload.creator_wallet_address else None,
+                "creator_nft_contract": payload.creator_nft_contract,
+                "registration_opens_at": registration_opens_at,
+                "scheduled_start_at": scheduled_start_at,
+                "late_registration_ends_at": late_registration_ends_at,
+                "is_recurring": payload.is_recurring,
+                "recurrence_rule": payload.recurrence_rule,
+            }
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    if settings.enable_onchain_payout and payload.asset_symbol.upper() == "USDC":
+        import blockchain
+
+        success = blockchain.create_tournament(
+            table_id=new_id,
+            title=payload.title,
+            desc=payload.desc,
+            buy_in_usdc=payload.buy_in_chips,
+            required_nft=payload.required_nft,
+        )
+        if not success:
+            raise HTTPException(status_code=500, detail="Blockchain transaction failed. Check Server balance/RPC.")
+
+    return {
+        "ok": True,
+        "tournament_id": new_id,
+        "title": payload.title,
+        "summary": tournament_manager.get_or_create_runtime(new_tournament.id).to_summary(),
+    }
 
 
 @app.post("/api/tournaments/{tournament_id}/join")

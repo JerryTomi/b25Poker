@@ -30,6 +30,23 @@ class PokerEngine:
         self.hand_over = True
         self.result = None
         self.hand_number = 0
+        self.blind_schedule: List[Dict] = []
+        self.blind_level_index = 0
+
+    def configure_blind_schedule(self, blind_schedule: Optional[List[Dict]] = None):
+        self.blind_schedule = blind_schedule or []
+        self.blind_level_index = 0
+        if self.blind_schedule:
+            self.apply_blind_level(0)
+
+    def apply_blind_level(self, level_index: int):
+        if not self.blind_schedule:
+            return
+        bounded_index = max(0, min(level_index, len(self.blind_schedule) - 1))
+        level = self.blind_schedule[bounded_index]
+        self.blind_level_index = bounded_index
+        self.small_blind = max(1, int(level.get("small_blind", self.small_blind)))
+        self.big_blind = max(self.small_blind, int(level.get("big_blind", self.big_blind)))
 
     def active_player_ids(self) -> List[str]:
         return [
@@ -118,7 +135,7 @@ class PokerEngine:
             self.hand_over = True
             return False
 
-        if self.hand_number > 0 and self.hand_number % 10 == 0:
+        if not self.blind_schedule and self.hand_number > 0 and self.hand_number % 10 == 0:
             self.small_blind *= 2
             self.big_blind *= 2
 
@@ -381,6 +398,8 @@ class PokerEngine:
             "highest_bet": self.highest_bet,
             "small_blind": self.small_blind,
             "big_blind": self.big_blind,
+            "blind_level_index": self.blind_level_index,
+            "blind_schedule": self.blind_schedule,
             "viewer_id": viewer_id,
             "handOver": self.hand_over,
             "result": self.result,
