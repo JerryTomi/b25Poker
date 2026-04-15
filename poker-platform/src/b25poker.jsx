@@ -646,7 +646,34 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
     }
   };
 
-  const allTournaments = [...web3Tournaments, ...tournaments];
+  const demoTables = [
+    {
+      id: "demo-1",
+      title: "Prototype Sit & Go",
+      desc: "Quick six-max sit-and-go with a clean blind structure.",
+      buy_in_chips: 1000,
+      asset_symbol: "$",
+      max_seats: 6,
+      seated_count: 0,
+      state: "registering", 
+      category: "tournament",
+      mode: "tournament_sng"
+    },
+    {
+      id: "demo-2",
+      title: "Friday Builder Cup",
+      desc: "A scheduled tournament with a published blind ladder and fixed buy-in.",
+      buy_in_chips: 1500,
+      asset_symbol: "$",
+      max_seats: 6,
+      seated_count: 0,
+      state: "finished", 
+      category: "tournament",
+      mode: "tournament_scheduled"
+    }
+  ];
+
+  const allTournaments = [...demoTables, ...web3Tournaments, ...tournaments];
   const gamesBySection = {
     cash: allTournaments.filter((game) => gameSectionKey(game) === "cash"),
     scheduled: allTournaments.filter((game) => gameSectionKey(game) === "scheduled"),
@@ -694,9 +721,6 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
               </button>
             )
           ) : null}
-          <button onClick={() => setCreatorOpen(true)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 999, padding: "10px 18px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            Create Table
-          </button>
         </div>
       </header>
 
@@ -724,7 +748,7 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
           join a table, and take home the prize pool.
         </p>
 
-        {/* Session creation — inline in hero */}
+        {/* Session creation and actions — inline in hero */}
         {!session ? (
           <div style={{ display: "flex", gap: 0, maxWidth: 380, margin: "0 auto", borderRadius: 14, overflow: "hidden", border: "1px solid rgba(201,168,76,0.25)", background: "rgba(255,255,255,0.04)" }}>
             <input
@@ -743,10 +767,16 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
             </button>
           </div>
         ) : (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 999, padding: "10px 20px" }}>
-            <span style={{ fontSize: 18 }}>♠</span>
-            <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>Welcome back, {session.display_name}</span>
-            <button onClick={createOrResumeSession} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", padding: 0 }}>refresh</button>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16 }}>
+            <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 999, padding: "10px 20px" }}>
+              <span style={{ fontSize: 18 }}>♠</span>
+              <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>Welcome back, {session.display_name}</span>
+              <button onClick={createOrResumeSession} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", padding: 0 }}>refresh</button>
+            </div>
+            
+            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}>
+              + Create Table
+            </button>
           </div>
         )}
 
@@ -756,11 +786,6 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
 
       {/* ── TOURNAMENT CARDS ── */}
       <section style={{ position: "relative", zIndex: 10, maxWidth: 1140, margin: "0 auto", padding: "0 24px 80px", width: "100%" }}>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
-          {gamesBySection.cash.length ? <span style={pillStyle()}>Cash Tables {gamesBySection.cash.length}</span> : null}
-          {gamesBySection.scheduled.length ? <span style={pillStyle()}>Scheduled Tournaments {gamesBySection.scheduled.length}</span> : null}
-          {gamesBySection.featured.length ? <span style={pillStyle()}>Featured Events {gamesBySection.featured.length}</span> : null}
-        </div>
         {loading && allTournaments.length === 0 ? (
           <div style={{ textAlign: "center", paddingTop: 40 }}><Spinner size={48} /></div>
         ) : (
@@ -782,46 +807,41 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
                   onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = `0 32px 80px rgba(0,0,0,0.55), 0 0 0 1px ${accent}33`; }}
                   onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 24px 60px rgba(0,0,0,0.45)"; }}
                 >
-                  {/* Badge */}
+                  {/* Badge Row */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: appearance.badgeBg, color: appearance.badgeColor }}>
-                      {appearance.badgeLabel}
+                    <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: "rgba(16,185,129,0.15)", color: "#10b981" }}>
+                      OPEN TABLE
                     </span>
-                    <span style={{ fontSize: 12, fontWeight: 700, color: accent, border: `1px solid ${accent}44`, borderRadius: 999, padding: "4px 10px" }}>
-                      {statusLabel(t)}
+                    <span style={{ fontSize: 12, fontWeight: 700, color: "#c9a84c", border: `1px solid rgba(201,168,76,0.3)`, borderRadius: 999, padding: "4px 10px" }}>
+                      {t.seated_count ?? 0}/{t.max_seats ?? 6}
                     </span>
                   </div>
 
                   {/* Icon + Title */}
-                  <div style={{ fontSize: 36, color: accent, marginBottom: 10, lineHeight: 1 }}>{appearance.icon}</div>
+                  <div style={{ fontSize: 36, color: "#c9a84c", marginBottom: 10, lineHeight: 1 }}>♠</div>
                   <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>{t.title}</div>
                   <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 20, flex: 1 }}>
-                    {gameDescription(t)}
+                    {t.desc}
                   </div>
 
                   {/* Buy-in row */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, fontSize: 13 }}>
-                    <span style={{ color: accent, fontWeight: 800 }}>{buyInLabel(t)}</span>
-                    <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>{gameTypeLabel(t)}</span>
+                    <span style={{ color: "#c9a84c", fontWeight: 800 }}>Buy-in: {t.asset_symbol}{t.buy_in_chips?.toLocaleString()}</span>
+                    <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>6-Max SNG</span>
                   </div>
 
                   {/* Join button */}
                   <button
                     onClick={() => handleJoin(t)}
-                    disabled={submitting || !isJoinable}
+                    disabled={submitting || t.state === "finished"}
                     style={{
                       width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
-                      fontWeight: 800, fontSize: 14, cursor: submitting || !isJoinable ? "not-allowed" : "pointer",
-                      opacity: isJoinable ? 1 : 0.45,
-                      background: isJoinable
-                        ? (t.isWeb3 ? "linear-gradient(135deg,#7c3aed,#a78bfa)" : "linear-gradient(135deg,#c9a84c,#f0d060)")
-                        : "rgba(255,255,255,0.06)",
-                      color: isJoinable ? (t.isWeb3 ? "#fff" : "#08070f") : "rgba(255,255,255,0.4)",
+                      fontWeight: 800, fontSize: 14, cursor: (submitting || t.state === "finished") ? "not-allowed" : "pointer",
+                      background: t.state === "finished" ? "rgba(255,255,255,0.04)" : "linear-gradient(135deg,#c9a84c,#f0d060)",
+                      color: t.state === "finished" ? "rgba(255,255,255,0.2)" : "#08070f",
                       transition: "opacity 0.2s",
                     }}>
-                    {isJoinable
-                      ? (t.isWeb3 ? "Connect & Enter" : t.category === "cash" ? "Join Table" : "Register")
-                      : (t.state === "running" ? "In Progress" : "Closed")}
+                    {t.state === "finished" ? "Closed" : "Join Table"}
                   </button>
                 </div>
               );
