@@ -156,6 +156,29 @@ async def lifespan(_: FastAPI):
     startup_state["bootstrap_error"] = None
     try:
         models.Base.metadata.create_all(bind=engine)
+
+        # Quick auto-migration for MVP SQLite
+        try:
+            with engine.begin() as conn:
+                alter_statements = [
+                    "ALTER TABLE tournaments ADD COLUMN required_nft VARCHAR",
+                    "ALTER TABLE tournaments ADD COLUMN creator_player_id VARCHAR",
+                    "ALTER TABLE tournaments ADD COLUMN creator_wallet_address VARCHAR",
+                    "ALTER TABLE tournaments ADD COLUMN creator_nft_contract VARCHAR",
+                    "ALTER TABLE tournaments ADD COLUMN access_policy VARCHAR DEFAULT 'open'",
+                    "ALTER TABLE tournaments ADD COLUMN asset_symbol VARCHAR DEFAULT 'S'",
+                    "ALTER TABLE tournaments ADD COLUMN asset_address VARCHAR",
+                    "ALTER TABLE tournaments ADD COLUMN asset_decimals INTEGER DEFAULT 0",
+                    "ALTER TABLE asset_whitelist ADD COLUMN creator_nft_contract VARCHAR",
+                ]
+                for stmt in alter_statements:
+                    try:
+                        conn.execute(text(stmt))
+                    except Exception:
+                        pass
+        except Exception as e:
+            logger.warning(f"Auto-migration skipped or failed: {e}")
+
         tournament_manager.ensure_seed_data()
         tournament_manager.start_background_task()
         startup_state["bootstrap_ok"] = True
