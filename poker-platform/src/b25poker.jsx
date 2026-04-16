@@ -102,8 +102,9 @@ function normalizeWeb3Game(game) {
 }
 
 function gameSectionKey(game) {
-  if (game.category === "cash") return "cash";
-  if (game.access === "nft") return "featured";
+  if (game.access === "nft" || game.isWeb3) return "featured";
+  if (game.category === "cash" || game.mode === "tournament_sng") return "cash";
+  if (game.mode === "tournament_scheduled") return "scheduled";
   return "scheduled";
 }
 
@@ -588,26 +589,28 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
     {
       id: "demo-1",
       title: "Prototype Sit & Go",
-      desc: "Quick six-max sit-and-go with a clean blind structure.",
+      desc: "Quick six-max sit-and-go with a clean blind structure. Sit down any time, leave when you like — take everything you've earned.",
       buy_in_chips: 1000,
       asset_symbol: "$",
       max_seats: 6,
       seated_count: 0,
-      state: "registering", 
-      category: "tournament",
-      mode: "tournament_sng"
+      state: "registering",
+      category: "cash",
+      mode: "tournament_sng",
+      access: "open",
     },
     {
       id: "demo-2",
       title: "Friday Builder Cup",
-      desc: "A scheduled tournament with a published blind ladder and fixed buy-in.",
+      desc: "A scheduled weekly tournament with escalating blinds and a fixed buy-in. Registration opens 30 minutes before start time.",
       buy_in_chips: 1500,
       asset_symbol: "$",
       max_seats: 6,
       seated_count: 0,
-      state: "finished", 
+      state: "scheduled",
       category: "tournament",
-      mode: "tournament_scheduled"
+      mode: "tournament_scheduled",
+      access: "open",
     }
   ];
 
@@ -616,6 +619,95 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
     cash: allTournaments.filter((game) => gameSectionKey(game) === "cash"),
     scheduled: allTournaments.filter((game) => gameSectionKey(game) === "scheduled"),
     featured: allTournaments.filter((game) => gameSectionKey(game) === "featured"),
+  };
+
+  // ── CARD RENDERER ─────────────────────────────────────────────────────────
+  const renderTableCard = (t) => {
+    const isJoinable = t.state === "scheduled" || t.state === "registering" || t.state === "countdown";
+    const isFinished = t.state === "finished";
+    const isScheduled = t.mode === "tournament_scheduled";
+    const appearance = gameAppearance(t);
+    const accent = appearance.accent;
+    const isNft = t.access === "nft" || t.isWeb3;
+    const isCash = t.category === "cash";
+
+    return (
+      <div key={t.id} style={{
+        borderRadius: 22, padding: 28,
+        background: isNft
+          ? "linear-gradient(155deg, rgba(20,14,40,0.98) 0%, rgba(12,9,24,0.99) 100%)"
+          : isCash
+          ? "linear-gradient(155deg, rgba(10,24,18,0.98) 0%, rgba(8,18,12,0.99) 100%)"
+          : "linear-gradient(155deg, rgba(18,16,36,0.95) 0%, rgba(11,10,22,0.98) 100%)",
+        border: `1px solid ${isNft ? "rgba(139,92,246,0.2)" : isCash ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.07)"}`,
+        boxShadow: `0 24px 60px rgba(0,0,0,0.45)`,
+        display: "flex", flexDirection: "column", gap: 0,
+        transition: "transform 0.2s, box-shadow 0.2s",
+        cursor: "default",
+        opacity: isFinished ? 0.65 : 1,
+      }}
+        onMouseEnter={e => { if (!isFinished) { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = `0 32px 80px rgba(0,0,0,0.55), 0 0 0 1px ${accent}44`; } }}
+        onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 24px 60px rgba(0,0,0,0.45)"; }}
+      >
+        {/* Badge Row */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
+          <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: appearance.badgeBg, color: appearance.badgeColor }}>
+            {isFinished ? "CLOSED" : appearance.badgeLabel}
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 700, color: accent, border: `1px solid ${accent}44`, borderRadius: 999, padding: "4px 10px" }}>
+            {t.seated_count ?? 0}/{t.max_seats ?? 6}
+          </span>
+        </div>
+
+        {/* Icon + Title */}
+        <div style={{ fontSize: 36, color: accent, marginBottom: 10, lineHeight: 1 }}>{appearance.icon}</div>
+        <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>{t.title}</div>
+        <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 20, flex: 1 }}>
+          {t.desc}
+        </div>
+
+        {/* Meta row */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, fontSize: 13 }}>
+          <span style={{ color: accent, fontWeight: 800 }}>
+            Buy-in: {t.asset_symbol || CURRENCY.symbol}{t.buy_in_chips?.toLocaleString() ?? t.buy_in_usdc?.toLocaleString() ?? "–"}
+          </span>
+          <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
+            {isScheduled ? "Scheduled" : isCash ? "Cash Table" : isNft ? "NFT Event" : "Sit & Go"}
+          </span>
+        </div>
+
+        {/* NFT warning */}
+        {isNft && !isFinished ? (
+          <div style={{ marginBottom: 14, fontSize: 11, color: "rgba(139,92,246,0.85)", background: "rgba(139,92,246,0.08)", border: "1px solid rgba(139,92,246,0.2)", borderRadius: 10, padding: "8px 12px" }}>
+            🔒 Requires NFT ownership to join
+          </div>
+        ) : null}
+
+        {/* Join button */}
+        <button
+          onClick={() => !isFinished && handleJoin(t)}
+          disabled={submitting || isFinished || (isScheduled && t.state === "scheduled")}
+          style={{
+            width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
+            fontWeight: 800, fontSize: 14,
+            cursor: (submitting || isFinished || (isScheduled && t.state === "scheduled")) ? "not-allowed" : "pointer",
+            background: isFinished
+              ? "rgba(255,255,255,0.04)"
+              : isScheduled && t.state === "scheduled"
+              ? `rgba(201,168,76,0.10)`
+              : isNft
+              ? "linear-gradient(135deg,#7c3aed,#a78bfa)"
+              : isCash
+              ? "linear-gradient(135deg,#059669,#10b981)"
+              : "linear-gradient(135deg,#c9a84c,#f0d060)",
+            color: isFinished ? "rgba(255,255,255,0.2)" : isScheduled && t.state === "scheduled" ? "#c9a84c" : isNft ? "#fff" : "#08070f",
+            transition: "opacity 0.2s",
+            border: isScheduled && t.state === "scheduled" ? "1px solid rgba(201,168,76,0.3)" : "none",
+          }}>
+          {isFinished ? "Closed" : isScheduled && t.state === "scheduled" ? "Registration Opens Soon" : submitting ? "Joining…" : "Join Table →"}
+        </button>
+      </div>
+    );
   };
 
   return (
@@ -639,7 +731,6 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
           {/* Contract status dot */}
           <div title={contractStatus === "ok" ? "On-chain contract responding" : "On-chain contract unreachable"} style={{ display: "flex", alignItems: "center", gap: 5, fontSize: 11, color: contractStatus === "ok" ? "#10b981" : contractStatus === "error" ? "rgba(239,68,68,0.7)" : "rgba(255,255,255,0.2)" }}>
             <span style={{ width: 6, height: 6, borderRadius: "50%", background: "currentColor", display: "inline-block", boxShadow: contractStatus === "ok" ? "0 0 6px #10b981" : "none" }} />
-            <span style={{ display: "none" }}>Chain</span>
           </div>
 
           {session ? (
@@ -659,10 +750,9 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
               </button>
             )
           ) : null}
-          
-          {/* ALWAYS VISIBLE HEADER CREATE TABLE BUTTON */}
+
           <button onClick={() => setCreatorOpen(true)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 999, padding: "10px 18px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
-            Create Table
+            + Create Table
           </button>
         </div>
       </header>
@@ -691,9 +781,8 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
           join a table, and take home the prize pool.
         </p>
 
-        {/* Session creation and actions */}
         {!session ? (
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <div style={{ display: "flex", gap: 0, maxWidth: 380, borderRadius: 14, overflow: "hidden", border: "1px solid rgba(201,168,76,0.25)", background: "rgba(255,255,255,0.04)" }}>
               <input
                 value={displayName}
@@ -710,20 +799,18 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
                 {submitting ? "…" : "Enter Casino"}
               </button>
             </div>
-            {/* HERO CREATE BUTTON - Always visible */}
-            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "12px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}>
+            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "12px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
               + Create Table
             </button>
           </div>
         ) : (
-          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16 }}>
+          <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
             <div style={{ display: "inline-flex", alignItems: "center", gap: 10, background: "rgba(16,185,129,0.07)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 999, padding: "10px 20px" }}>
               <span style={{ fontSize: 18 }}>♠</span>
               <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>Welcome back, {session.display_name}</span>
               <button onClick={createOrResumeSession} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", padding: 0 }}>refresh</button>
             </div>
-            {/* HERO CREATE BUTTON - When Logged In */}
-            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer", transition: "background 0.2s" }} onMouseEnter={e => e.currentTarget.style.background = "rgba(255,255,255,0.1)"} onMouseLeave={e => e.currentTarget.style.background = "rgba(255,255,255,0.05)"}>
+            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
               + Create Table
             </button>
           </div>
@@ -733,75 +820,82 @@ function Lobby({ session, walletAddress, onSession, onStart, onWallet }) {
         {error ? <p style={{ marginTop: 14, color: "#f87171", fontSize: 13 }}>{error}</p> : null}
       </section>
 
-      {/* ── TOURNAMENT CARDS ── */}
+      {/* ── LOBBY SECTIONS ── */}
       <section style={{ position: "relative", zIndex: 10, maxWidth: 1140, margin: "0 auto", padding: "0 24px 80px", width: "100%" }}>
-        
-        {/* Restored Category Pills */}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 10, marginBottom: 20 }}>
-          {gamesBySection.cash.length ? <span style={pillStyle()}>Cash Tables {gamesBySection.cash.length}</span> : null}
-          {gamesBySection.scheduled.length ? <span style={pillStyle()}>Scheduled Tournaments {gamesBySection.scheduled.length}</span> : null}
-          {gamesBySection.featured.length ? <span style={pillStyle()}>Featured Events {gamesBySection.featured.length}</span> : null}
-        </div>
 
-        {/* Removed the 'loading' block entirely for demo cards so they ALWAYS show up */}
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
-          {allTournaments.map(t => {
-            const isJoinable = t.state === "scheduled" || t.state === "registering" || t.state === "countdown";
-            const appearance = gameAppearance(t);
-            const accent = appearance.accent;
-            return (
-              <div key={t.id} style={{
-                borderRadius: 22, padding: 28,
-                background: "linear-gradient(155deg, rgba(18,16,36,0.95) 0%, rgba(11,10,22,0.98) 100%)",
-                border: `1px solid rgba(255,255,255,0.07)`,
-                boxShadow: `0 24px 60px rgba(0,0,0,0.45)`,
-                display: "flex", flexDirection: "column", gap: 0,
-                transition: "transform 0.2s, box-shadow 0.2s",
-                cursor: "default",
-              }}
-                onMouseEnter={e => { e.currentTarget.style.transform = "translateY(-4px)"; e.currentTarget.style.boxShadow = `0 32px 80px rgba(0,0,0,0.55), 0 0 0 1px ${accent}33`; }}
-                onMouseLeave={e => { e.currentTarget.style.transform = "translateY(0)"; e.currentTarget.style.boxShadow = "0 24px 60px rgba(0,0,0,0.45)"; }}
-              >
-                {/* Badge Row */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-                  <span style={{ fontSize: 10, fontWeight: 900, letterSpacing: 2, textTransform: "uppercase", padding: "4px 10px", borderRadius: 20, background: "rgba(16,185,129,0.15)", color: "#10b981" }}>
-                    OPEN TABLE
-                  </span>
-                  <span style={{ fontSize: 12, fontWeight: 700, color: "#c9a84c", border: `1px solid rgba(201,168,76,0.3)`, borderRadius: 999, padding: "4px 10px" }}>
-                    {t.seated_count ?? 0}/{t.max_seats ?? 6}
-                  </span>
-                </div>
-
-                {/* Icon + Title */}
-                <div style={{ fontSize: 36, color: "#c9a84c", marginBottom: 10, lineHeight: 1 }}>♠</div>
-                <div style={{ fontFamily: "'Playfair Display', serif", fontSize: 22, fontWeight: 900, marginBottom: 10, lineHeight: 1.2 }}>{t.title}</div>
-                <div style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", lineHeight: 1.6, marginBottom: 20, flex: 1 }}>
-                  {t.desc}
-                </div>
-
-                {/* Buy-in row */}
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, fontSize: 13 }}>
-                  <span style={{ color: "#c9a84c", fontWeight: 800 }}>Buy-in: {t.asset_symbol}{t.buy_in_chips?.toLocaleString()}</span>
-                  <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>6-Max SNG</span>
-                </div>
-
-                {/* Join button */}
-                <button
-                  onClick={() => handleJoin(t)}
-                  disabled={submitting || t.state === "finished"}
-                  style={{
-                    width: "100%", padding: "13px 0", borderRadius: 12, border: "none",
-                    fontWeight: 800, fontSize: 14, cursor: (submitting || t.state === "finished") ? "not-allowed" : "pointer",
-                    background: t.state === "finished" ? "rgba(255,255,255,0.04)" : "linear-gradient(135deg,#c9a84c,#f0d060)",
-                    color: t.state === "finished" ? "rgba(255,255,255,0.2)" : "#08070f",
-                    transition: "opacity 0.2s",
-                  }}>
-                  {t.state === "finished" ? "Closed" : "Join Table"}
-                </button>
+        {/* ── SECTION 1: REVOLVING / CASH TABLES ── */}
+        <div style={{ marginBottom: 56 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
+            <div>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#10b981", fontWeight: 700, marginBottom: 8 }}>Sit Down Any Time</div>
+              <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Revolving Tables</h2>
+              <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.4)", fontSize: 13, lineHeight: 1.6 }}>
+                Cash-style sit & go tables. Buy in, play, leave whenever — take everything you've won.
+              </p>
+            </div>
+            <button onClick={() => { setCreatorOpen(true); setCreatorTab("sng"); }} style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)", borderRadius: 999, padding: "10px 20px", color: "#10b981", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+              + New Table
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+            {[...gamesBySection.cash, ...allTournaments.filter(t => t.mode === "tournament_sng" && gameSectionKey(t) !== "featured")].map(renderTableCard)}
+            {gamesBySection.cash.length === 0 && allTournaments.filter(t => t.mode === "tournament_sng" && gameSectionKey(t) !== "featured").length === 0 ? (
+              <div style={{ gridColumn: "1/-1", padding: "48px 32px", textAlign: "center", borderRadius: 18, border: "1px dashed rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
+                No revolving tables open right now. Be the first to create one.
               </div>
-            );
-          })}
+            ) : null}
+          </div>
         </div>
+
+        {/* ── SECTION 2: SCHEDULED TOURNAMENTS ── */}
+        <div style={{ marginBottom: 56 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
+            <div>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c", fontWeight: 700, marginBottom: 8 }}>Planned Events</div>
+              <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Scheduled Tournaments</h2>
+              <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.4)", fontSize: 13, lineHeight: 1.6 }}>
+                Fixed start times with escalating blinds. Register early — late registration closes before the first level ends.
+              </p>
+            </div>
+            <button onClick={() => { setCreatorOpen(true); setCreatorTab("tournament"); }} style={{ background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 999, padding: "10px 20px", color: "#c9a84c", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
+              + Schedule Tournament
+            </button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+            {gamesBySection.scheduled.map(renderTableCard)}
+            {gamesBySection.scheduled.length === 0 ? (
+              <div style={{ gridColumn: "1/-1", padding: "48px 32px", textAlign: "center", borderRadius: 18, border: "1px dashed rgba(201,168,76,0.12)", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
+                No scheduled tournaments yet. Create one to get it on the calendar.
+              </div>
+            ) : null}
+          </div>
+        </div>
+
+        {/* ── SECTION 3: FEATURED NFT EVENTS ── */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
+            <div>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#a78bfa", fontWeight: 700, marginBottom: 8 }}>NFT Holders Only</div>
+              <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Featured Events</h2>
+              <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.4)", fontSize: 13, lineHeight: 1.6 }}>
+                Exclusive on-chain events. Hold a B25 NFT to unlock access. Buy-ins settled via USDC escrow.
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: contractStatus === "ok" ? "#10b981" : "rgba(255,255,255,0.25)" }}>
+              <span style={{ width: 7, height: 7, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
+              {contractStatus === "ok" ? "Contract live" : contractStatus === "error" ? "Contract unreachable" : "Checking chain…"}
+            </div>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
+            {gamesBySection.featured.map(renderTableCard)}
+            {gamesBySection.featured.length === 0 ? (
+              <div style={{ gridColumn: "1/-1", padding: "48px 32px", textAlign: "center", borderRadius: 18, border: "1px dashed rgba(139,92,246,0.12)", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
+                {contractStatus === "loading" ? "Fetching on-chain events…" : "No NFT events published on-chain yet."}
+              </div>
+            ) : null}
+          </div>
+        </div>
+
       </section>
 
       {/* ── FOOTER ── */}
