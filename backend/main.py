@@ -169,7 +169,13 @@ async def lifespan(_: FastAPI):
                     "ALTER TABLE tournaments ADD COLUMN asset_symbol VARCHAR DEFAULT 'S'",
                     "ALTER TABLE tournaments ADD COLUMN asset_address VARCHAR",
                     "ALTER TABLE tournaments ADD COLUMN asset_decimals INTEGER DEFAULT 0",
+                    "ALTER TABLE tournaments ADD COLUMN starting_stack INTEGER",
+                    "ALTER TABLE tournaments ADD COLUMN late_registration_ends_at DATETIME",
+                    "ALTER TABLE tournaments ADD COLUMN is_recurring BOOLEAN DEFAULT 0",
+                    "ALTER TABLE tournaments ADD COLUMN recurrence_rule VARCHAR",
+                    "ALTER TABLE players ADD COLUMN wallet_address VARCHAR",
                     "ALTER TABLE asset_whitelist ADD COLUMN creator_nft_contract VARCHAR",
+                    "ALTER TABLE tournament_entries ADD COLUMN finish_position INTEGER",
                 ]
                 for stmt in alter_statements:
                     try:
@@ -274,7 +280,14 @@ async def create_demo_session(payload: DemoSessionRequest):
 
 @app.get("/api/tournaments")
 async def list_tournaments():
-    return {"items": tournament_manager.list_tournaments()}
+    try:
+        items = tournament_manager.list_tournaments()
+        return {"items": items}
+    except Exception as e:
+        import traceback
+        error_msg = traceback.format_exc()
+        logger.error(f"Error in list_tournaments: {error_msg}")
+        raise HTTPException(status_code=500, detail=str(error_msg))
 
 
 @app.get("/api/assets")
