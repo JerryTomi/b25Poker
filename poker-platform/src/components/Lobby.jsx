@@ -15,7 +15,7 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
   const [tournaments, setTournaments] = useState([]);
   const [web3Tournaments, setWeb3Tournaments] = useState([]);
   const [assets, setAssets] = useState([]);
-  const [contractStatus, setContractStatus] = useState("loading"); // "loading" | "ok" | "error"
+  const [contractStatus, setContractStatus] = useState("loading");
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -63,7 +63,6 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
       setWeb3Tournaments(formattedWeb3);
       setContractStatus("ok");
     } catch (err) {
-      // Contract unreachable or ABI mismatch — free tables still work fine
       setContractStatus("error");
       setWeb3Tournaments([]);
     }
@@ -105,7 +104,7 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
       }
       const data = await response.json();
       onSession(data);
-      setBanner("Demo profile ready. Pick a sit-and-go table below.");
+      setBanner("Demo profile ready. Pick a table below.");
       return data;
     } catch (err) {
       setError(err.message); return null;
@@ -120,7 +119,6 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
 
     setSubmitting(true); setError("");
 
-    // 🚀 THE WEB3 INTERCEPTOR
     if (tournament.isWeb3) {
       if (!walletAddress) {
         setError("You must connect your MetaMask wallet to join a VIP Table.");
@@ -132,13 +130,11 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
         setBanner(`Verifying NFT & Depositing ${tournament.buy_in_usdc} USDC... Please check MetaMask.`);
         const provider = new ethers.BrowserProvider(window.ethereum);
         
-        // 1. Force Base Sepolia Network
         const network = await provider.getNetwork();
         if (network.chainId !== 84532n) {
           await window.ethereum.request({ method: 'wallet_switchEthereumChain', params: [{ chainId: '0x14a34' }] });
         }
 
-        // 2. Check NFT Access
         const nftContract = new ethers.Contract(tournament.requiredNft, ERC721_ABI, provider);
         const nftBalance = await nftContract.balanceOf(walletAddress);
         if (nftBalance === 0n) {
@@ -148,10 +144,8 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
         const signer = await provider.getSigner();
         const usdcContract = new ethers.Contract(USDC_ADDRESS, ERC20_ABI, signer);
         const escrowContract = new ethers.Contract(ESCROW_ADDRESS, ESCROW_ABI, signer);
-        // Assuming depositAmount uses 6 decimals based on existing logic
         const depositAmount = ethers.parseUnits(tournament.buy_in_usdc.toString(), 6);
         
-        // 3. Approve and Deposit USDC
         const approveTx = await usdcContract.approve(ESCROW_ADDRESS, depositAmount);
         await approveTx.wait();
         const depositTx = await escrowContract.buyIn(tournament.id, depositAmount);
@@ -161,11 +155,10 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
       } catch (err) {
         setError(err.message || "Web3 Transaction failed or was canceled.");
         setSubmitting(false);
-        return; // Halt if they didn't pay/don't have NFT
+        return;
       }
     }
 
-    // 📡 THE BACKEND JOIN (Runs for both Free tables and Web3 tables after deposit)
     try {
       const response = await fetch(apiUrl(`/api/tournaments/${tournament.id}/join`), {
         method: "POST", headers: { "Content-Type": "application/json" },
@@ -216,47 +209,19 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
       setCreatorOpen(false);
       await fetchTournaments();
     } catch (err) {
-      throw err; // Passed back to CreateModal
+      throw err;
     }
   };
 
-  const demoTables = [
-    {
-      id: "demo-1",
-      title: "Prototype Sit & Go",
-      desc: "Quick six-max sit-and-go with a clean blind structure. Sit down any time, leave when you like — take everything you've earned.",
-      buy_in_chips: 1000,
-      asset_symbol: "$",
-      max_seats: 6,
-      seated_count: 0,
-      state: "registering",
-      category: "cash",
-      mode: "tournament_sng",
-      access: "open",
-    },
-    {
-      id: "demo-2",
-      title: "Friday Builder Cup",
-      desc: "A scheduled weekly tournament with escalating blinds and a fixed buy-in. Registration opens 30 minutes before start time.",
-      buy_in_chips: 1500,
-      asset_symbol: "$",
-      max_seats: 6,
-      seated_count: 0,
-      state: "scheduled",
-      category: "tournament",
-      mode: "tournament_scheduled",
-      access: "open",
-    }
-  ];
-
-  const allTournaments = [...demoTables, ...web3Tournaments, ...tournaments];
+  // Only pull real data - demo data removed entirely.
+  const allTournaments = [...web3Tournaments, ...tournaments];
+  
+  // Categorize based on whether they require an NFT or not
   const gamesBySection = {
-    cash: allTournaments.filter((game) => gameSectionKey(game) === "cash"),
-    scheduled: allTournaments.filter((game) => gameSectionKey(game) === "scheduled"),
+    scheduled: allTournaments.filter((game) => gameSectionKey(game) !== "featured"),
     featured: allTournaments.filter((game) => gameSectionKey(game) === "featured"),
   };
 
-  // ── CARD RENDERER ─────────────────────────────────────────────────────────
   const renderTableCard = (t) => {
     const isJoinable = t.state === "scheduled" || t.state === "registering" || t.state === "countdown";
     const isFinished = t.state === "finished";
@@ -264,17 +229,14 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
     const appearance = gameAppearance(t);
     const accent = appearance.accent;
     const isNft = t.access === "nft" || t.isWeb3;
-    const isCash = t.category === "cash";
 
     return (
       <div key={t.id} style={{
         borderRadius: 22, padding: 28,
         background: isNft
           ? "linear-gradient(155deg, rgba(20,14,40,0.98) 0%, rgba(12,9,24,0.99) 100%)"
-          : isCash
-          ? "linear-gradient(155deg, rgba(10,24,18,0.98) 0%, rgba(8,18,12,0.99) 100%)"
           : "linear-gradient(155deg, rgba(18,16,36,0.95) 0%, rgba(11,10,22,0.98) 100%)",
-        border: `1px solid ${isNft ? "rgba(139,92,246,0.2)" : isCash ? "rgba(16,185,129,0.15)" : "rgba(255,255,255,0.07)"}`,
+        border: `1px solid ${isNft ? "rgba(139,92,246,0.2)" : "rgba(255,255,255,0.07)"}`,
         boxShadow: `0 24px 60px rgba(0,0,0,0.45)`,
         display: "flex", flexDirection: "column", gap: 0,
         transition: "transform 0.2s, box-shadow 0.2s",
@@ -304,7 +266,7 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
             Buy-in: {t.asset_symbol || CURRENCY.symbol}{t.buy_in_chips?.toLocaleString() ?? t.buy_in_usdc?.toLocaleString() ?? "–"}
           </span>
           <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
-            {isScheduled ? "Scheduled" : isCash ? "Revolving Table" : isNft ? "NFT Event" : "Sit & Go"}
+            {isScheduled ? "Scheduled" : isNft ? "NFT Event" : "Sit & Go"}
           </span>
         </div>
 
@@ -327,8 +289,6 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
               ? `rgba(201,168,76,0.10)`
               : isNft
               ? "linear-gradient(135deg,#7c3aed,#a78bfa)"
-              : isCash
-              ? "linear-gradient(135deg,#059669,#10b981)"
               : "linear-gradient(135deg,#c9a84c,#f0d060)",
             color: isFinished ? "rgba(255,255,255,0.2)" : isScheduled && t.state === "scheduled" ? "#c9a84c" : isNft ? "#fff" : "#08070f",
             transition: "opacity 0.2s",
@@ -379,6 +339,7 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
             )
           ) : null}
 
+          {/* This is the ONLY Create Table button now */}
           <button onClick={() => setCreatorOpen(true)} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 999, padding: "10px 18px", color: "#fff", fontWeight: 700, fontSize: 13, cursor: "pointer" }}>
             + Create Table
           </button>
@@ -427,9 +388,6 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
                 {submitting ? "…" : "Enter Casino"}
               </button>
             </div>
-            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "12px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-              + Create Table
-            </button>
           </div>
         ) : (
           <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
@@ -438,9 +396,6 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
               <span style={{ color: "#10b981", fontWeight: 700, fontSize: 14 }}>Welcome back, {session.display_name}</span>
               <button onClick={createOrResumeSession} style={{ background: "none", border: "none", color: "rgba(255,255,255,0.3)", fontSize: 11, cursor: "pointer", padding: 0 }}>refresh</button>
             </div>
-            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.15)", borderRadius: 999, padding: "10px 24px", color: "#fff", fontWeight: 700, fontSize: 14, cursor: "pointer" }}>
-              + Create Table
-            </button>
           </div>
         )}
 
@@ -451,63 +406,30 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
       {/* ── LOBBY SECTIONS ── */}
       <section style={{ position: "relative", zIndex: 10, maxWidth: 1140, margin: "0 auto", padding: "0 24px 80px", width: "100%" }}>
 
-        {/* ── SECTION 1: REVOLVING / CASH TABLES ── */}
+        {/* ── SECTION 1: SCHEDULED TOURNAMENTS (API GAMES) ── */}
         <div style={{ marginBottom: 56 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
             <div>
-              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#10b981", fontWeight: 700, marginBottom: 8 }}>Sit Down Any Time</div>
-              <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Revolving Tables</h2>
-              <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.4)", fontSize: 13, lineHeight: 1.6 }}>
-                Cash-style sit & go tables. Buy in, play, leave whenever — take everything you've won.
-              </p>
+              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c", fontWeight: 700, marginBottom: 8 }}>Open Tables</div>
+              <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Live Games</h2>
             </div>
-            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(16,185,129,0.08)", border: "1px solid rgba(16,185,129,0.25)", borderRadius: 999, padding: "10px 20px", color: "#10b981", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
-              + New Table
-            </button>
-          </div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
-            {[...gamesBySection.cash, ...allTournaments.filter(t => t.mode === "tournament_sng" && gameSectionKey(t) !== "featured")].map(renderTableCard)}
-            {gamesBySection.cash.length === 0 && allTournaments.filter(t => t.mode === "tournament_sng" && gameSectionKey(t) !== "featured").length === 0 ? (
-              <div style={{ gridColumn: "1/-1", padding: "48px 32px", textAlign: "center", borderRadius: 18, border: "1px dashed rgba(255,255,255,0.08)", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
-                No revolving tables open right now. Be the first to create one.
-              </div>
-            ) : null}
-          </div>
-        </div>
-
-        {/* ── SECTION 2: SCHEDULED TOURNAMENTS ── */}
-        <div style={{ marginBottom: 56 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
-            <div>
-              <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#c9a84c", fontWeight: 700, marginBottom: 8 }}>Planned Events</div>
-              <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Scheduled Tournaments</h2>
-              <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.4)", fontSize: 13, lineHeight: 1.6 }}>
-                Fixed start times with escalating blinds. Register early — late registration closes before the first level ends.
-              </p>
-            </div>
-            <button onClick={() => setCreatorOpen(true)} style={{ background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.25)", borderRadius: 999, padding: "10px 20px", color: "#c9a84c", fontWeight: 700, fontSize: 13, cursor: "pointer", whiteSpace: "nowrap" }}>
-              + Schedule Tournament
-            </button>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
             {gamesBySection.scheduled.map(renderTableCard)}
             {gamesBySection.scheduled.length === 0 ? (
               <div style={{ gridColumn: "1/-1", padding: "48px 32px", textAlign: "center", borderRadius: 18, border: "1px dashed rgba(201,168,76,0.12)", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
-                No scheduled tournaments yet. Create one to get it on the calendar.
+                No tables open right now. Be the first to create one.
               </div>
             ) : null}
           </div>
         </div>
 
-        {/* ── SECTION 3: FEATURED NFT EVENTS ── */}
+        {/* ── SECTION 2: FEATURED NFT EVENTS ── */}
         <div style={{ marginBottom: 16 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
             <div>
               <div style={{ fontSize: 11, letterSpacing: 3, textTransform: "uppercase", color: "#a78bfa", fontWeight: 700, marginBottom: 8 }}>NFT Holders Only</div>
               <h2 style={{ margin: 0, fontFamily: "'Playfair Display', serif", fontSize: 28, fontWeight: 900 }}>Featured Events</h2>
-              <p style={{ margin: "8px 0 0", color: "rgba(255,255,255,0.4)", fontSize: 13, lineHeight: 1.6 }}>
-                Exclusive on-chain events. Hold a B25 NFT to unlock access. Buy-ins settled via USDC escrow.
-              </p>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: contractStatus === "ok" ? "#10b981" : "rgba(255,255,255,0.25)" }}>
               <span style={{ width: 7, height: 7, borderRadius: "50%", background: "currentColor", display: "inline-block" }} />
