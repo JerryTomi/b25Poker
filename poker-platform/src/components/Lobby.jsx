@@ -332,7 +332,7 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
               : "linear-gradient(135deg,#c9a84c,#f0d060)",
             color: isFinished ? "rgba(255,255,255,0.2)" : isScheduled && t.state === "scheduled" ? "#c9a84c" : isNft ? "#fff" : "#08070f",
             transition: "opacity 0.2s",
-            border: isScheduled && t.state === "scheduled" ? "1px solid rgba(201,168,76,0.3)" : "none",
+            ...(isScheduled && t.state === "scheduled" ? { border: "1px solid rgba(201,168,76,0.3)" } : { border: "none" })
           }}>
           {isFinished ? "Closed" : isScheduled && t.state === "scheduled" ? "Registration Opens Soon" : submitting ? "Joining…" : "Join Table →"}
         </button>

@@ -18,7 +18,9 @@ cmds = [
 [phases.build]
 cmds = [
   # Build the frontend
-  "npm run build --prefix poker-platform"
+  "npm run build --prefix poker-platform",
+  "mkdir -p backend/static",
+  "cp -R poker-platform/dist/* backend/static/"
 ]
 
 [start]
