@@ -200,6 +200,27 @@ class TournamentManager:
         db = SessionLocal()
         try:
             self._ensure_asset_seed_data(db)
+
+            # ── Cleanup legacy / duplicate demo records from prior deployments ──
+            canonical_demo_ids = {"demo-sng-1", "demo-scheduled-1"}
+            old_demos = (
+                db.query(models.TournamentDB)
+                .filter(
+                    models.TournamentDB.id.like("demo-%"),
+                    ~models.TournamentDB.id.in_(canonical_demo_ids),
+                )
+                .all()
+            )
+            for old in old_demos:
+                # Remove their entries first (FK), then the tournament itself
+                db.query(models.TournamentEntryDB).filter(
+                    models.TournamentEntryDB.tournament_id == old.id
+                ).delete()
+                db.delete(old)
+            if old_demos:
+                db.commit()
+                logger.info("Cleaned up %d legacy demo tournament(s)", len(old_demos))
+
             defaults = [
                 {
                     "id": "demo-sng-1",

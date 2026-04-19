@@ -57,7 +57,7 @@ class CreateTournamentRequest(BaseModel):
     late_registration_ends_at: Optional[str] = None
     is_recurring: bool = False
     recurrence_rule: Optional[str] = None
-    admin_secret: str
+    admin_secret: Optional[str] = None
 
 
 class DemoSessionRequest(BaseModel):
@@ -297,8 +297,10 @@ async def list_assets():
 
 @app.post("/api/tournaments")
 async def create_tournament_endpoint(payload: CreateTournamentRequest):
-    if payload.admin_secret != os.getenv("ADMIN_SECRET", "supersecret"):
-        raise HTTPException(status_code=403, detail="Invalid admin secret")
+    # In demo mode, skip admin_secret check; in production this will be wallet-signature auth
+    if not settings.demo_mode:
+        if payload.admin_secret != os.getenv("ADMIN_SECRET", "supersecret"):
+            raise HTTPException(status_code=403, detail="Invalid admin secret")
 
     new_id = f"custom-sng-{uuid.uuid4().hex[:6]}"
     try:
