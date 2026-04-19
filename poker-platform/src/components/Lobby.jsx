@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ethers } from 'ethers';
 import { 
   apiUrl, getResponseError, normalizeApiGame, normalizeWeb3Game, 
-  gameSectionKey, gameAppearance
+  gameSectionKey, gameAppearance, deduplicateGames, formatBuyIn
 } from '../utils/helpers';
 import { 
   ESCROW_ADDRESS, USDC_ADDRESS, ERC721_ABI, ERC20_ABI, ESCROW_ABI, 
@@ -213,14 +213,29 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
     }
   };
 
-  // Only pull real data - demo data removed entirely.
-  const allTournaments = [...web3Tournaments, ...tournaments];
+  // Merge and de-duplicate all games by id
+  let allTournaments = deduplicateGames([...web3Tournaments, ...tournaments]);
   
-  // Categorize based on whether they require an NFT or not
+  // De-duplicate by title and section to clean up seeded duplicates, 
+  // keeping exactly one cash game and one sng demo of the same name.
+  const seenDemoTypes = new Set();
+  allTournaments = allTournaments.filter(g => {
+    if (g.access === "nft" || g.isWeb3) return true;
+    const demoKey = `${g.title.trim().toLowerCase()}-${gameSectionKey(g)}`;
+    if (seenDemoTypes.has(demoKey)) return false;
+    seenDemoTypes.add(demoKey);
+    return true;
+  });
+  
+  // Split into proper lobby sections
   const gamesBySection = {
-    scheduled: allTournaments.filter((game) => gameSectionKey(game) !== "featured"),
-    featured: allTournaments.filter((game) => gameSectionKey(game) === "featured"),
+    cash: allTournaments.filter(g => gameSectionKey(g) === "cash"),
+    sng: allTournaments.filter(g => gameSectionKey(g) === "sng"),
+    scheduled: allTournaments.filter(g => gameSectionKey(g) === "scheduled"),
+    featured: allTournaments.filter(g => gameSectionKey(g) === "featured"),
   };
+  // Combine non-NFT tournaments into one "Live Games" section for cleaner display
+  const liveGames = [...gamesBySection.cash, ...gamesBySection.sng, ...gamesBySection.scheduled];
 
   const renderTableCard = (t) => {
     const isJoinable = t.state === "scheduled" || t.state === "registering" || t.state === "countdown";
@@ -263,10 +278,10 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
 
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, fontSize: 13 }}>
           <span style={{ color: accent, fontWeight: 800 }}>
-            Buy-in: {t.asset_symbol || CURRENCY.symbol}{t.buy_in_chips?.toLocaleString() ?? t.buy_in_usdc?.toLocaleString() ?? "–"}
+            Buy-in: {formatBuyIn(t)}
           </span>
           <span style={{ color: "rgba(255,255,255,0.3)", fontSize: 12 }}>
-            {isScheduled ? "Scheduled" : isNft ? "NFT Event" : "Sit & Go"}
+            {isScheduled ? "Scheduled" : isNft ? "NFT Event" : t.category === "cash" ? "Cash Table" : "Sit & Go"}
           </span>
         </div>
 
@@ -406,7 +421,7 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
       {/* ── LOBBY SECTIONS ── */}
       <section style={{ position: "relative", zIndex: 10, maxWidth: 1140, margin: "0 auto", padding: "0 24px 80px", width: "100%" }}>
 
-        {/* ── SECTION 1: SCHEDULED TOURNAMENTS (API GAMES) ── */}
+        {/* ── SECTION 1: LIVE GAMES (Cash + SnG + Scheduled) ── */}
         <div style={{ marginBottom: 56 }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 24 }}>
             <div>
@@ -415,8 +430,8 @@ export default function Lobby({ session, walletAddress, onSession, onStart, onWa
             </div>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))", gap: 20 }}>
-            {gamesBySection.scheduled.map(renderTableCard)}
-            {gamesBySection.scheduled.length === 0 ? (
+            {liveGames.map(renderTableCard)}
+            {liveGames.length === 0 ? (
               <div style={{ gridColumn: "1/-1", padding: "48px 32px", textAlign: "center", borderRadius: 18, border: "1px dashed rgba(201,168,76,0.12)", color: "rgba(255,255,255,0.25)", fontSize: 14 }}>
                 No tables open right now. Be the first to create one.
               </div>
