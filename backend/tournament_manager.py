@@ -98,6 +98,7 @@ class TournamentRuntime:
         self.countdown_started_at: Optional[float] = None
         self.started_at: Optional[float] = tournament.started_at.timestamp() if tournament.started_at else None
         self.player_disconnects: Dict[str, float] = {}
+        self.empty_since: Optional[float] = None
 
     def registration_is_open(self) -> bool:
         return self.registration_opens_at is None or utcnow() >= self.registration_opens_at
@@ -456,10 +457,28 @@ class TournamentManager:
             if now - disconnected_at >= settings.reconnect_grace_sec:
                 runtime.player_disconnects.pop(player_id, None)
                 if player_id in runtime.engine.players and runtime.state in {"running", "countdown"}:
+                    if runtime.state == "running" and runtime.engine.current_turn == player_id:
+                        action = runtime.engine.auto_act_current_player()
+                        self.log_event(runtime.tournament_id, player_id, "timeout_action", {"action": action})
                     runtime.engine.players[player_id]["eliminated"] = runtime.state == "running"
                     if runtime.state == "running":
                         runtime.engine.players[player_id]["stack"] = 0
+                elif player_id in runtime.engine.players and runtime.state == "registering":
+                    try:
+                        self.leave_tournament(runtime.tournament_id, player_id)
+                    except Exception as e:
+                        logger.error(f"Failed to auto-leave disconnected player {player_id}: {e}")
                 self.persist_runtime(runtime)
+
+        seated_count = len([pid for pid in runtime.engine.seats if pid])
+        if seated_count == 0:
+            if runtime.empty_since is None:
+                runtime.empty_since = now
+            elif now - runtime.empty_since > 300: # 5 minutes empty
+                if runtime.state == "registering" and (not runtime.scheduled_start_at or runtime.scheduled_start_at < utcnow()):
+                    self.finish_tournament(runtime.tournament_id)
+        else:
+            runtime.empty_since = None
 
         if runtime.state == "running" and runtime.engine.hand_over and not runtime.engine.tournament_finished():
             runtime.engine.start_hand()

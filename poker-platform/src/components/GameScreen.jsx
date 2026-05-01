@@ -78,6 +78,20 @@ export default function GameScreen({ tournament, session, walletAddress, onLeave
   const nowSec = Math.floor(Date.now() / 1000);
   const turnDeadline = current_turn_started_at ? Math.max(0, turn_timeout_sec - Math.max(0, nowSec - Math.floor(current_turn_started_at))) : turn_timeout_sec;
 
+  const handleLeaveClick = async () => {
+    if (tournament_state === "registering" || tournament_state === "countdown" || tournament_state === "finished") {
+      try {
+        await fetch(apiUrl(`/api/tournaments/${tournament.id}/leave`), {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ player_id: session.player_id, reconnect_token: session.reconnect_token })
+        });
+      } catch (err) {
+        console.warn("Could not gracefully leave table:", err);
+      }
+    }
+    onLeave();
+  };
+
   const layoutPositions = [
     { bottom: -56, left: "50%", transform: "translateX(-50%)" },
     { bottom: "8%", left: -64, transform: "translateY(50%)" },
@@ -126,7 +140,7 @@ export default function GameScreen({ tournament, session, walletAddress, onLeave
           <Spinner size={56} />
           <h2 style={{ margin: "18px 0 8px", fontSize: 24 }}>Waiting for the deal</h2>
           <p style={{ margin: 0, color: "#9a90b4" }}>{Object.keys(players).length}/6 seated · starts in {countdown_remaining}s</p>
-          <button onClick={onLeave} style={secondaryButtonStyle}>Leave Lobby</button>
+          <button onClick={handleLeaveClick} style={secondaryButtonStyle}>Leave Lobby</button>
         </Modal>
       ) : null}
 
@@ -135,12 +149,12 @@ export default function GameScreen({ tournament, session, walletAddress, onLeave
           <div style={{ fontSize: 56 }}>{result?.winners?.includes(viewer_id) ? "🏆" : "♠"}</div>
           <h2 style={{ margin: "0 0 6px", fontSize: 26 }}>{result?.winners?.includes(viewer_id) ? "Victory" : "Tournament Complete"}</h2>
           <p style={{ margin: 0, color: "#9a90b4" }}>{result?.winners?.includes(viewer_id) ? "You won the sit-and-go." : "The final result is locked in."}</p>
-          <button onClick={onLeave} style={secondaryButtonStyle}>Return to Lobby</button>
+          <button onClick={handleLeaveClick} style={secondaryButtonStyle}>Return to Lobby</button>
         </Modal>
       ) : null}
 
       <div style={topBarStyle}>
-        <button onClick={onLeave} style={secondaryButtonStyle}>Back to Lobby</button>
+        <button onClick={handleLeaveClick} style={secondaryButtonStyle}>Back to Lobby</button>
         <div style={{ textAlign: "center" }}>
           <div style={{ fontSize: 11, letterSpacing: 2, color: "#5a5472", textTransform: "uppercase" }}>{title || tournament.title}</div>
           <div style={{ fontWeight: 700 }}>{phase || "waiting"} · blinds {small_blind}/{big_blind}</div>
@@ -201,3 +215,4 @@ export default function GameScreen({ tournament, session, walletAddress, onLeave
     </div>
   );
 }
+
